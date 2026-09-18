@@ -1,9 +1,9 @@
 import hashlib
-import json
 import os
 import platform
 import subprocess
 import uuid
+from datetime import datetime, timezone
 import requests
 from utils.paths import get_app_dir
 
@@ -40,6 +40,31 @@ def get_machine_soul() -> str:
     raw_signature = "||".join(components) + "@KIRI_SECURE_FINGERPRINT_SALT_V4"
     return hashlib.sha256(raw_signature.encode()).hexdigest()
 
+def format_expiry(expires_raw: str | None) -> str:
+    if not expires_raw:
+        return "Permanent / Lifetime"
+
+    try:
+        clean_iso = expires_raw.replace("Z", "+00:00")
+        exp_dt = datetime.fromisoformat(clean_iso)
+        now_dt = datetime.now(timezone.utc)
+
+        delta = exp_dt - now_dt
+        if delta.total_seconds() <= 0:
+            return "Expired"
+
+        local_str = exp_dt.astimezone().strftime("%d %b %Y, %H:%M")
+        days = delta.days
+        hours = int(delta.seconds // 3600)
+
+        if days > 0:
+            return f"{local_str} ({days}d {hours}h remaining)"
+        else:
+            minutes = int((delta.seconds % 3600) // 60)
+            return f"{local_str} ({hours}h {minutes}m remaining)"
+    except Exception:
+        return str(expires_raw)[:19]
+
 def verify_key_payload(key: str) -> dict:
     cleaned = key.strip()
     if not cleaned:
@@ -58,15 +83,27 @@ def verify_key_payload(key: str) -> dict:
         if response.status_code == 200:
             data = response.json()
             if data.get("success"):
+                formatted_exp = format_expiry(data.get("expiresAt"))
                 return {
                     "passed": True,
                     "owner": str(data.get("owner", "Active User")),
-                    "expires": str(data.get("expires", "Permanent")),
+                    "expires": formatted_exp,
+                    "raw_expires": data.get("expiresAt")
                 }
             return {"passed": False, "msg": str(data.get("message", "License denied by server."))}
+        elif response.status_code in (403, 404):
+            data = response.json()
+            msg = data.get("message", "key_rejected")
+            if msg == "key_expired":
+                return {"passed": False, "msg": "License duration has expired."}
+            elif msg == "hwid_mismatch":
+                return {"passed": False, "msg": "Locked to another machine (HWID mismatch)."}
+            elif msg == "key_inactive":
+                return {"passed": False, "msg": "License is deactivated by administrator."}
+            return {"passed": False, "msg": f"Access Denied: {msg}"}
         return {"passed": False, "msg": f"Authentication rejected (Status {response.status_code})"}
     except requests.exceptions.Timeout:
-        return {"passed": False, "msg": "Authentication server timeout. Check network."}
+        return {"passed": False, "msg": "Auth server timeout. Check network."}
     except requests.exceptions.RequestException:
         return {"passed": False, "msg": "Gateway connection failure."}
 
