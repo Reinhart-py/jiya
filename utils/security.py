@@ -5,57 +5,93 @@ import platform
 import subprocess
 import uuid
 import requests
+from utils.paths import get_app_dir
 
-KEY_PATH = "license.key"
 API_URL = "https://jules-api.vercel.app/api/validate"
 
+def get_key_path() -> str:
+    return str(get_app_dir() / "license.key")
+
 def get_machine_soul() -> str:
-    """Generates a unique hardware ID (HWID) similar to node-machine-id"""
+    components = []
     try:
         if platform.system() == "Windows":
-            hwid = subprocess.check_output('wmic csproduct get uuid').decode().split('\n')[1].strip()
+            out = subprocess.check_output("wmic csproduct get uuid", shell=True).decode()
+            lines = [line.strip() for line in out.splitlines() if line.strip()]
+            if len(lines) > 1:
+                components.append(lines[1])
+            disk_out = subprocess.check_output("wmic diskdrive get serialnumber", shell=True).decode()
+            disk_lines = [line.strip() for line in disk_out.splitlines() if line.strip()]
+            if len(disk_lines) > 1:
+                components.append(disk_lines[1])
         elif platform.system() == "Darwin":
-            hwid = subprocess.check_output("ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID", shell=True).decode().split('"')[3]
+            out = subprocess.check_output("ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID", shell=True).decode()
+            components.append(out.split('"')[3])
         else:
-            hwid = subprocess.check_output('cat /etc/machine-id', shell=True).decode().strip()
+            with open("/etc/machine-id", "r") as f:
+                components.append(f.read().strip())
     except Exception:
-        hwid = str(uuid.getnode())
-        
-    return hashlib.md5((hwid + "ReinhartWasHere").encode()).hexdigest()
+        pass
+
+    components.append(str(uuid.getnode()))
+    components.append(os.getenv("USERNAME", os.getenv("USER", "generic_user")))
+    components.append(platform.processor())
+
+    raw_signature = "||".join(components) + "@KIRI_SECURE_FINGERPRINT_SALT_V4"
+    return hashlib.sha256(raw_signature.encode()).hexdigest()
 
 def verify_key_payload(key: str) -> dict:
+    cleaned = key.strip()
+    if not cleaned:
+        return {"passed": False, "msg": "Key string cannot be empty."}
+
     hwid = get_machine_soul()
-    payload = {"key": key.strip(), "hwid": hwid}
-    
+    payload = {
+        "key": cleaned,
+        "hwid": hwid,
+        "os": platform.platform(),
+        "arch": platform.machine()
+    }
+
     try:
-        # 5-second timeout so the UI doesn't freeze forever if the server is down
-        response = requests.post(API_URL, json=payload, timeout=5)
-        data = response.json()
-        
-        if data.get("success"):
-            return {
-                "passed": True, 
-                "owner": data.get("owner", "Unknown"), 
-                "expires": data.get("expires", "Lifetime / Active")
-            }
-        else:
-            return {"passed": False, "msg": data.get("message", "Key Rejected")}
-    except Exception as e:
-        return {"passed": False, "msg": "Cannot connect to auth server."}
+        response = requests.post(API_URL, json=payload, timeout=6)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                return {
+                    "passed": True,
+                    "owner": str(data.get("owner", "Active User")),
+                    "expires": str(data.get("expires", "Permanent")),
+                }
+            return {"passed": False, "msg": str(data.get("message", "License denied by server."))}
+        return {"passed": False, "msg": f"Authentication rejected (Status {response.status_code})"}
+    except requests.exceptions.Timeout:
+        return {"passed": False, "msg": "Authentication server timeout. Check network."}
+    except requests.exceptions.RequestException:
+        return {"passed": False, "msg": "Gateway connection failure."}
 
 def save_key(key: str) -> bool:
     try:
-        with open(KEY_PATH, "w", encoding="utf-8") as f:
+        with open(get_key_path(), "w", encoding="utf-8") as f:
             f.write(key.strip())
         return True
     except Exception:
         return False
 
 def get_saved_key() -> str:
-    if os.path.exists(KEY_PATH):
+    path = get_key_path()
+    if os.path.exists(path):
         try:
-            with open(KEY_PATH, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return f.read().strip()
         except Exception:
-            pass
+            return ""
     return ""
+
+def revoke_saved_key() -> None:
+    path = get_key_path()
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
