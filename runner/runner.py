@@ -21,7 +21,7 @@ class Runner:
 
     def advance_to_page(self, driver, target_page: int) -> int:
         current = 1
-        self.log(f"⚡ Fast-forwarding directly to Page {target_page}...")
+        self.log(f"⚡ Bypassing localized nodes to reach Page {target_page}...")
         
         while current < target_page:
             try:
@@ -44,7 +44,7 @@ class Runner:
                 current += 1
                 time.sleep(0.7)
             except Exception as e:
-                self.log(f"! Fast-forward hit end of list at Page {current}: {e}")
+                self.log(f"! Bypass intercepted at Page {current}: {e}")
                 break
         return current
 
@@ -79,7 +79,7 @@ class Runner:
                         raw_c = "".join(filter(str.isdigit, page_count_el.text))
                         if raw_c:
                             max_pain_threshold_pages = (int(raw_c) // 12) + 2
-                        self.log(f"ℹ Detected ~{max_pain_threshold_pages} available catalog pages")
+                        self.log(f"ℹ Catalog intelligence reveals ~{max_pain_threshold_pages} pages available.")
                     except Exception:
                         pass
 
@@ -91,7 +91,7 @@ class Runner:
                         break
 
                     target_str = f"/{self.target_count}" if self.target_count > 0 else ""
-                    self.log(f"--- PAGE {current_page} --- | Extracted: {total_saved}{target_str}")
+                    self.log(f"\n--- PENETRATING PAGE {current_page} --- | Yield: {total_saved}{target_str}")
 
                     scroll_container = None
                     for xpath in [
@@ -123,7 +123,7 @@ class Runner:
                         cards = driver.find_elements(By.XPATH, "//a[contains(@href, '/firm/')]")
 
                     if not cards:
-                        self.log(f"✦ No further cards detected on Page {current_page}. Reached catalog end.")
+                        self.log(f"✦ Zero targets acquired on Page {current_page}. Reached network end.")
                         return
 
                     for card in cards:
@@ -209,7 +209,7 @@ class Runner:
 
                             append_single_row(self.output_dir, [title, category, p1, p2, p3, website, address])
                             total_saved += 1
-                            self.log(f" [#{total_saved:<4}] {title[:25]:<25} | {p1:<16} | {website[:25]}")
+                            self.log(f"  [#{total_saved:<3}] {title[:20]:<20} | {p1:<15} | {website[:20]}")
 
                             try:
                                 driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
@@ -239,12 +239,12 @@ class Runner:
 
             except Exception as crash_err:
                 self.log(f"! Memory overflow / crash intercepted at Page {current_page}: {crash_err}")
-                self.log("⟳ Reviving Chromium session and picking up from exact page in 3s...")
+                self.log("⟲ Forcing memory dump and reviving chromium daemon in 3s...")
                 time.sleep(3)
             finally:
                 quit_session(driver)
 
             if current_page > max_pain_threshold_pages:
-                self.log("✔ All available pages scraped.")
+                self.log("✔ Network traversal complete. Securing dump.")
                 clear_state()
                 break
