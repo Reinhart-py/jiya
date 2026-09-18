@@ -2,7 +2,7 @@
 
 <img src="https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727" alt="Reinhart" width="120" style="border-radius: 50%;"/>
 
-# Jiya
+# kiri
 ### High-Velocity Lead Generation & Directory Mining Suite
 
 [![Author](https://img.shields.io/badge/Author-Reinhart%20aka%20kiri-8A2BE2?style=for-the-badge&logo=googlechrome&logoColor=white)](https://reinhart.pages.dev/)
