@@ -21,7 +21,7 @@ class Runner:
 
     def advance_to_page(self, driver, target_page: int) -> int:
         current = 1
-        self.log(f"⚡ Bypassing localized nodes to reach Page {target_page}...")
+        self.log(f"Skipping pages to reach Page {target_page}...")
         
         while current < target_page:
             try:
@@ -44,7 +44,7 @@ class Runner:
                 current += 1
                 time.sleep(0.7)
             except Exception as e:
-                self.log(f"! Bypass intercepted at Page {current}: {e}")
+                self.log(f"Skipping stopped at Page {current}: {e}")
                 break
         return current
 
@@ -52,11 +52,11 @@ class Runner:
         write_csv_headers(self.output_dir)
         current_page = self.start_page
         total_saved = self.initial_saved
-        max_pain_threshold_pages = 1000
+        max_pages = 1000
 
         while True:
             if self.target_count > 0 and total_saved >= self.target_count:
-                self.log(f"✔ Target of {self.target_count} leads successfully harvested!")
+                self.log(f"Target of {self.target_count} leads saved.")
                 clear_state()
                 break
 
@@ -78,20 +78,20 @@ class Runner:
                         page_count_el = find(driver, XPATHS["result_count"])
                         raw_c = "".join(filter(str.isdigit, page_count_el.text))
                         if raw_c:
-                            max_pain_threshold_pages = (int(raw_c) // 12) + 2
-                        self.log(f"ℹ Catalog intelligence reveals ~{max_pain_threshold_pages} pages available.")
+                            max_pages = (int(raw_c) // 12) + 2
+                        self.log(f"Found approximately {max_pages} pages of results.")
                     except Exception:
                         pass
 
                 if current_page > 1:
                     current_page = self.advance_to_page(driver, current_page)
 
-                while current_page <= max_pain_threshold_pages:
+                while current_page <= max_pages:
                     if self.target_count > 0 and total_saved >= self.target_count:
                         break
 
                     target_str = f"/{self.target_count}" if self.target_count > 0 else ""
-                    self.log(f"\n--- PENETRATING PAGE {current_page} --- | Yield: {total_saved}{target_str}")
+                    self.log(f"\n--- Page {current_page} --- | Saved: {total_saved}{target_str}")
 
                     scroll_container = None
                     for xpath in [
@@ -123,7 +123,7 @@ class Runner:
                         cards = driver.find_elements(By.XPATH, "//a[contains(@href, '/firm/')]")
 
                     if not cards:
-                        self.log(f"✦ Zero targets acquired on Page {current_page}. Reached network end.")
+                        self.log(f"No more places found on Page {current_page}. Reached the end.")
                         return
 
                     for card in cards:
@@ -209,7 +209,7 @@ class Runner:
 
                             append_single_row(self.output_dir, [title, category, p1, p2, p3, website, address])
                             total_saved += 1
-                            self.log(f"  [#{total_saved:<3}] {title[:20]:<20} | {p1:<15} | {website[:20]}")
+                            self.log(f"Saved [#{total_saved}]: {title[:20]} | {p1} | {website[:20]}")
 
                             try:
                                 driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
@@ -238,13 +238,13 @@ class Runner:
                     time.sleep(2.0)
 
             except Exception as crash_err:
-                self.log(f"! Memory overflow / crash intercepted at Page {current_page}: {crash_err}")
-                self.log("⟲ Forcing memory dump and reviving chromium daemon in 3s...")
+                self.log(f"Browser crashed or ran out of memory: {crash_err}")
+                self.log("Restarting browser and resuming from the same page in 3s...")
                 time.sleep(3)
             finally:
                 quit_session(driver)
 
-            if current_page > max_pain_threshold_pages:
-                self.log("✔ Network traversal complete. Securing dump.")
+            if current_page > max_pages:
+                self.log("Finished scraping all pages.")
                 clear_state()
                 break
