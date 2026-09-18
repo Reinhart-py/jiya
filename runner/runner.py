@@ -1,7 +1,6 @@
 import time
-from argparse import Namespace
+from typing import Any, Callable
 
-from rich.console import Console
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
@@ -9,11 +8,8 @@ from executor import XPATHS, clean_dom_memory, create_session, find, navigate, q
 from io_handler.handler import append_single_row, write_csv_headers
 from utils import build_search_query, clear_state, save_state
 
-console = Console()
-
-
 class Runner:
-    def __init__(self, config: Namespace) -> None:
+    def __init__(self, config: Any, ui_logger: Callable[[str], None] = print) -> None:
         self.country_code: str = getattr(config, "country", "ae")
         self.city_name: str = config.city_name
         self.query_string: str = config.query_string
@@ -21,35 +17,35 @@ class Runner:
         self.start_page: int = getattr(config, "start_page", 1)
         self.initial_saved: int = getattr(config, "initial_saved", 0)
         self.target_count: int = getattr(config, "target_count", 0)
+        self.log = ui_logger
 
     def advance_to_page(self, driver, target_page: int) -> int:
         current = 1
-        console.print(f"[bold cyan]⚡ Fast-forwarding directly to Page {target_page}...[/bold cyan]")
+        self.log(f"⚡ Fast-forwarding directly to Page {target_page}...")
+        
+        while current < target_page:
+            try:
+                target_btn = driver.find_elements(
+                    By.XPATH,
+                    f"//div[contains(@class, 'pagination')]//span[text()='{target_page}'] | //div[contains(@class, '_5ocwns')]//span[text()='{target_page}']",
+                )
+                if target_btn:
+                    driver.execute_script("arguments[0].click();", target_btn[0])
+                    time.sleep(2.0)
+                    return target_page
+            except Exception:
+                pass
 
-        with console.status("[bold yellow]Skipping earlier pages without extracting...", spinner="dots"):
-            while current < target_page:
-                try:
-                    target_btn = driver.find_elements(
-                        By.XPATH,
-                        f"//div[contains(@class, 'pagination')]//span[text()='{target_page}'] | //div[contains(@class, '_5ocwns')]//span[text()='{target_page}']",
-                    )
-                    if target_btn:
-                        driver.execute_script("arguments[0].click();", target_btn[0])
-                        time.sleep(2.0)
-                        return target_page
-                except Exception:
-                    pass
-
-                try:
-                    next_btn = find(driver, XPATHS["next_page_btn"])
-                    driver.execute_script("arguments[0].scrollIntoView(true);", next_btn)
-                    time.sleep(0.1)
-                    driver.execute_script("arguments[0].click();", next_btn)
-                    current += 1
-                    time.sleep(0.7)
-                except Exception as e:
-                    console.print(f"[red]! Fast-forward hit end of list at Page {current}: {e}[/red]")
-                    break
+            try:
+                next_btn = find(driver, XPATHS["next_page_btn"])
+                driver.execute_script("arguments[0].scrollIntoView(true);", next_btn)
+                time.sleep(0.1)
+                driver.execute_script("arguments[0].click();", next_btn)
+                current += 1
+                time.sleep(0.7)
+            except Exception as e:
+                self.log(f"! Fast-forward hit end of list at Page {current}: {e}")
+                break
         return current
 
     def run(self) -> None:
@@ -60,7 +56,7 @@ class Runner:
 
         while True:
             if self.target_count > 0 and total_saved >= self.target_count:
-                console.print(f"\n[bold green]✔ Target of {self.target_count} leads successfully harvested![/bold green]")
+                self.log(f"✔ Target of {self.target_count} leads successfully harvested!")
                 clear_state()
                 break
 
@@ -83,7 +79,7 @@ class Runner:
                         raw_c = "".join(filter(str.isdigit, page_count_el.text))
                         if raw_c:
                             max_pain_threshold_pages = (int(raw_c) // 12) + 2
-                        console.print(f"[dim cyan]ℹ Detected ~{max_pain_threshold_pages} available catalog pages[/dim cyan]")
+                        self.log(f"ℹ Detected ~{max_pain_threshold_pages} available catalog pages")
                     except Exception:
                         pass
 
@@ -95,10 +91,7 @@ class Runner:
                         break
 
                     target_str = f"/{self.target_count}" if self.target_count > 0 else ""
-                    console.print(
-                        f"\n[bold white on #1a1a24] ◈ PAGE {current_page} ◈ | "
-                        f"Extracted: [bold #39ff14]{total_saved}{target_str}[/bold #39ff14] [/bold white on #1a1a24]"
-                    )
+                    self.log(f"--- PAGE {current_page} --- | Extracted: {total_saved}{target_str}")
 
                     scroll_container = None
                     for xpath in [
@@ -130,7 +123,7 @@ class Runner:
                         cards = driver.find_elements(By.XPATH, "//a[contains(@href, '/firm/')]")
 
                     if not cards:
-                        console.print(f"[yellow]✦ No further cards detected on Page {current_page}. Reached catalog end.[/yellow]")
+                        self.log(f"✦ No further cards detected on Page {current_page}. Reached catalog end.")
                         return
 
                     for card in cards:
@@ -216,10 +209,7 @@ class Runner:
 
                             append_single_row(self.output_dir, [title, category, p1, p2, p3, website, address])
                             total_saved += 1
-                            console.print(
-                                f" [bold cyan]#{total_saved:<5}[/bold cyan] [white]{title[:24]:<24}[/white] | "
-                                f"[yellow]{p1:<16}[/yellow] | [dim blue]{website[:28]}[/dim blue]"
-                            )
+                            self.log(f" [#{total_saved:<4}] {title[:25]:<25} | {p1:<16} | {website[:25]}")
 
                             try:
                                 driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
@@ -247,17 +237,14 @@ class Runner:
                     current_page += 1
                     time.sleep(2.0)
 
-            except KeyboardInterrupt:
-                console.print("\n[bold yellow]! Scraper interrupted by user. Progress safely secured.[/bold yellow]")
-                break
             except Exception as crash_err:
-                console.print(f"\n[bold red]! Browser memory overflow / crash intercepted at Page {current_page}: {crash_err}[/bold red]")
-                console.print("[bold cyan]⟳ Reviving Chromium session and picking up from exact page in 3s...[/bold cyan]")
+                self.log(f"! Memory overflow / crash intercepted at Page {current_page}: {crash_err}")
+                self.log("⟳ Reviving Chromium session and picking up from exact page in 3s...")
                 time.sleep(3)
             finally:
                 quit_session(driver)
 
             if current_page > max_pain_threshold_pages:
-                console.print("\n[bold green]✔ All available pages scraped.[/bold green]")
+                self.log("✔ All available pages scraped.")
                 clear_state()
                 break
