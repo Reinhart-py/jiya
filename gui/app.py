@@ -13,29 +13,30 @@ from utils.state_manager import load_all_history
 
 ctk.set_appearance_mode("dark")
 
-BG_VOID = "#070303"
-SIDEBAR_GLASS = "#0F0505"
-CARD_GLASS = "#170707"
-ACCENT_BLOOD = "#B91C1C"
-ACCENT_HOVER = "#991B1B"
-BORDER_HIGHLIGHT = "#3A1010"
-TEXT_PRIMARY = "#F8DFDF"
-TEXT_MUTED = "#8B5A5A"
+# ◈ NEON GLOSSY COLOR PALETTE ◈
+BG_COLOR = "#050505"           # Pitch black background
+CARD_COLOR = "#0D0D0D"         # Slightly raised black for cards
+NEON_PURPLE = "#A855F7"        # Glowing shiny purple edge
+HOVER_PURPLE = "#7E22CE"       # Darker purple for button hovers
+TEXT_WHITE = "#FFFFFF"
+TEXT_GRAY = "#9CA3AF"
 
-class JiyaApp(ctk.CTk):
+class KiriApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Jiya")
-        self.geometry("850x550")
-        self.resizable(False, False)
-        self.configure(fg_color=BG_VOID)
+        self.title("Kiri")
+        self.geometry("820x520")
+        self.minsize(750, 480)
+        self.configure(fg_color=BG_COLOR)
 
         self.current_thread = None
         self.is_running = False
         self.resume_state = {}
+        self.icons = {}
 
         self._build_layout()
+        self._load_ui_icons()
         self._build_sidebar()
         self._build_dashboard()
         self._build_gmaps_view()
@@ -49,62 +50,66 @@ class JiyaApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=SIDEBAR_GLASS)
+        self.sidebar_frame = ctk.CTkFrame(self, width=180, corner_radius=0, fg_color=BG_COLOR)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(6, weight=1)
 
-        self.main_frame = ctk.CTkFrame(self, corner_radius=20, fg_color=BG_VOID)
-        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=15, pady=15)
+        self.main_frame = ctk.CTkFrame(self, corner_radius=20, fg_color=BG_COLOR)
+        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.main_frame.grid_rowconfigure(0, weight=1)
         self.main_frame.grid_columnconfigure(0, weight=1)
 
         self.frames = {}
 
-    def _fetch_avatar_bg(self, size):
-        try:
-            url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            raw_data = urllib.request.urlopen(req, timeout=5).read()
-            img = Image.open(BytesIO(raw_data)).convert("RGBA")
-            img = img.resize(size, Image.Resampling.LANCZOS)
-            
-            mask = Image.new("L", size, 0)
-            draw = ImageDraw.Draw(mask)
-            draw.ellipse((0, 0) + size, fill=255)
-            
-            output = Image.new("RGBA", size, (0, 0, 0, 0))
-            output.paste(img, (0, 0), mask)
-            
-            new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
-            self.after(0, lambda: self.avatar_lbl.configure(image=new_img))
-        except Exception:
-            pass 
+    def _load_ui_icons(self):
+        """Fetches proper sleek white icons in the background so the app boots instantly"""
+        icon_urls = {
+            "dashboard": "https://img.icons8.com/ios-filled/50/ffffff/dashboard.png",
+            "gmaps": "https://img.icons8.com/ios-filled/50/ffffff/google-maps.png",
+            "2gis": "https://img.icons8.com/ios-filled/50/ffffff/globe.png",
+            "history": "https://img.icons8.com/ios-filled/50/ffffff/time-machine.png",
+            "profile": "https://img.icons8.com/ios-filled/50/ffffff/user.png"
+        }
+
+        def fetch():
+            for name, url in icon_urls.items():
+                try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    raw_data = urllib.request.urlopen(req, timeout=3).read()
+                    img = Image.open(BytesIO(raw_data)).convert("RGBA")
+                    self.icons[name] = ctk.CTkImage(light_image=img, dark_image=img, size=(18, 18))
+                    
+                    # Update buttons if they are already drawn
+                    if hasattr(self, 'nav_btns') and name in self.nav_btns:
+                        self.after(0, lambda n=name: self.nav_btns[n].configure(image=self.icons[n]))
+                except Exception:
+                    pass
+        threading.Thread(target=fetch, daemon=True).start()
 
     def _build_sidebar(self):
-        size = (50, 50)
-        img = Image.new("RGBA", size, (185, 28, 28, 255))
-        mask = Image.new("L", size, 0)
-        draw = ImageDraw.Draw(mask)
-        draw.ellipse((0, 0) + size, fill=255)
-        output = Image.new("RGBA", size, (0, 0, 0, 0))
-        output.paste(img, (0, 0), mask)
-        
-        self.avatar_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
-        self.avatar_lbl = ctk.CTkLabel(self.sidebar_frame, image=self.avatar_img, text="")
-        self.avatar_lbl.grid(row=0, column=0, pady=(25, 5))
+        # Load the local logo1.png
+        try:
+            logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images", "logo1.png")
+            if not os.path.exists(logo_path): logo_path = "images/logo1.png"
+            logo_img = Image.open(logo_path).convert("RGBA")
+            self.logo_ctk = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(70, 70))
+        except Exception:
+            # Fallback if image folder is missing
+            logo_img = Image.new("RGBA", (70, 70), (0, 0, 0, 0))
+            self.logo_ctk = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(70, 70))
 
-        threading.Thread(target=self._fetch_avatar_bg, args=(size,), daemon=True).start()
+        logo_lbl = ctk.CTkLabel(self.sidebar_frame, image=self.logo_ctk, text="")
+        logo_lbl.grid(row=0, column=0, pady=(20, 5))
 
-        # Fixed: Removed 'tracking=2' and manually spaced the text
-        title_lbl = ctk.CTkLabel(self.sidebar_frame, text="J I Y A   S U I T E", font=ctk.CTkFont(size=14, weight="bold"), text_color=ACCENT_BLOOD)
+        title_lbl = ctk.CTkLabel(self.sidebar_frame, text="K I R I", font=ctk.CTkFont(size=18, weight="bold"), text_color=NEON_PURPLE)
         title_lbl.grid(row=1, column=0, pady=(0, 25))
 
         nav_buttons = [
-            ("dashboard", "✦ Dashboard"),
-            ("gmaps", "❖ Google Maps"),
-            ("2gis", "❖ 2GIS Global"),
-            ("history", "⟲ Vault / Resume"),
-            ("profile", "◈ Developer"),
+            ("dashboard", " Dashboard"),
+            ("gmaps", " Google Maps"),
+            ("2gis", " 2GIS Global"),
+            ("history", " History"),
+            ("profile", " Developer"),
         ]
 
         self.nav_btns = {}
@@ -112,11 +117,12 @@ class JiyaApp(ctk.CTk):
             btn = ctk.CTkButton(
                 self.sidebar_frame,
                 text=text,
+                image=self.icons.get(key, None),
                 fg_color="transparent",
-                text_color=TEXT_PRIMARY,
-                hover_color=CARD_GLASS,
+                text_color=TEXT_WHITE,
+                hover_color=CARD_COLOR,
                 anchor="w",
-                corner_radius=8,
+                corner_radius=12,
                 font=ctk.CTkFont(size=13),
                 command=lambda k=key: self.select_frame(k)
             )
@@ -127,7 +133,7 @@ class JiyaApp(ctk.CTk):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frames["dashboard"] = frame
 
-        title = ctk.CTkLabel(frame, text="Command Center", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_PRIMARY)
+        title = ctk.CTkLabel(frame, text="Dashboard", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.grid(row=0, column=0, sticky="w", pady=(5, 15))
 
         stats_frame = ctk.CTkFrame(frame, fg_color="transparent")
@@ -137,56 +143,56 @@ class JiyaApp(ctk.CTk):
         history = load_all_history()
         total_leads = sum(h.get("total_saved", 0) for h in history)
 
-        self._create_stat_card(stats_frame, "Sessions", str(len(history)), 0)
-        self._create_stat_card(stats_frame, "Total Leads", f"{total_leads:,}", 1)
+        self._create_stat_card(stats_frame, "Total Sessions", str(len(history)), 0)
+        self._create_stat_card(stats_frame, "Leads Saved", f"{total_leads:,}", 1)
 
-        log_frame = ctk.CTkFrame(frame, fg_color=CARD_GLASS, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=15)
+        log_frame = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
         log_frame.grid(row=2, column=0, sticky="nsew", pady=15)
         frame.grid_rowconfigure(2, weight=1)
 
-        lbl = ctk.CTkLabel(log_frame, text="Terminal Output", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_MUTED)
+        lbl = ctk.CTkLabel(log_frame, text="Log Output", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_GRAY)
         lbl.pack(anchor="w", padx=15, pady=(10, 0))
 
-        self.sys_log = ctk.CTkTextbox(log_frame, fg_color="transparent", text_color=TEXT_PRIMARY, font=ctk.CTkFont(family="Consolas", size=11))
+        self.sys_log = ctk.CTkTextbox(log_frame, fg_color="transparent", text_color=TEXT_WHITE, font=ctk.CTkFont(size=12))
         self.sys_log.pack(expand=True, fill="both", padx=10, pady=10)
         self.sys_log.configure(state="disabled")
 
     def _create_stat_card(self, parent, title, value, col):
-        card = ctk.CTkFrame(parent, fg_color=CARD_GLASS, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=15, height=90)
-        card.grid(row=0, column=col, sticky="ew", padx=5)
+        card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15, height=90)
+        card.grid(row=0, column=col, sticky="ew", padx=8)
         card.pack_propagate(False)
 
-        lbl_val = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=28, weight="bold"), text_color=ACCENT_BLOOD)
+        lbl_val = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=28, weight="bold"), text_color=NEON_PURPLE)
         lbl_val.pack(anchor="w", padx=15, pady=(10, 0))
-        lbl_title = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11), text_color=TEXT_MUTED)
+        lbl_title = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12), text_color=TEXT_GRAY)
         lbl_title.pack(anchor="w", padx=15)
 
     def _build_gmaps_view(self):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frames["gmaps"] = frame
 
-        title = ctk.CTkLabel(frame, text="Google Maps Intelligence", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_PRIMARY)
+        title = ctk.CTkLabel(frame, text="Google Maps", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(5, 15))
 
-        form = ctk.CTkFrame(frame, fg_color=CARD_GLASS, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=15)
+        form = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
         form.pack(fill="x", ipady=10)
 
         ctk.CTkLabel(form, text="Search Query / Maps URL / Batch File", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
         
         row = ctk.CTkFrame(form, fg_color="transparent")
         row.pack(fill="x", padx=20)
-        self.gmaps_input = ctk.CTkEntry(row, width=320, fg_color=BG_VOID, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        self.gmaps_input = ctk.CTkEntry(row, width=320, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
         self.gmaps_input.pack(side="left")
         self.gmaps_input.insert(0, "Software in Business Bay")
         
-        ctk.CTkButton(row, text="Browse", width=80, fg_color=BG_VOID, border_color=ACCENT_BLOOD, border_width=1, hover_color=SIDEBAR_GLASS, command=self._browse_file).pack(side="left", padx=10)
+        ctk.CTkButton(row, text="Browse", width=80, fg_color=BG_COLOR, border_color=NEON_PURPLE, border_width=1, hover_color=HOVER_PURPLE, command=self._browse_file).pack(side="left", padx=10)
 
-        ctk.CTkLabel(form, text="Target Leads Cap (0 for unlimited)", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.gmaps_cap = ctk.CTkEntry(form, width=150, fg_color=BG_VOID, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        ctk.CTkLabel(form, text="Total Leads to Save (0 for unlimited)", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.gmaps_cap = ctk.CTkEntry(form, width=150, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
         self.gmaps_cap.pack(anchor="w", padx=20)
         self.gmaps_cap.insert(0, "1000")
 
-        self.gmaps_btn = ctk.CTkButton(frame, text="Initiate Extraction", fg_color=ACCENT_BLOOD, hover_color=ACCENT_HOVER, corner_radius=8, command=self._start_gmaps)
+        self.gmaps_btn = ctk.CTkButton(frame, text="Start Scraping", fg_color=NEON_PURPLE, hover_color=HOVER_PURPLE, corner_radius=10, command=self._start_gmaps)
         self.gmaps_btn.pack(anchor="w", pady=20)
 
     def _browse_file(self):
@@ -199,35 +205,35 @@ class JiyaApp(ctk.CTk):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frames["2gis"] = frame
 
-        title = ctk.CTkLabel(frame, text="2GIS Directory Mining", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_PRIMARY)
+        title = ctk.CTkLabel(frame, text="2GIS Scraper", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(5, 15))
 
-        form = ctk.CTkFrame(frame, fg_color=CARD_GLASS, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=15)
+        form = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
         form.pack(fill="x", ipady=10)
 
-        ctk.CTkLabel(form, text="Target Region", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.twogis_city = ctk.CTkEntry(form, width=320, fg_color=BG_VOID, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        ctk.CTkLabel(form, text="City Name", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.twogis_city = ctk.CTkEntry(form, width=320, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
         self.twogis_city.pack(anchor="w", padx=20)
         self.twogis_city.insert(0, "Dubai")
 
         ctk.CTkLabel(form, text="Search Keyword", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.twogis_query = ctk.CTkEntry(form, width=320, fg_color=BG_VOID, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        self.twogis_query = ctk.CTkEntry(form, width=320, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
         self.twogis_query.pack(anchor="w", padx=20)
         self.twogis_query.insert(0, "Software")
 
-        ctk.CTkLabel(form, text="Target Leads Cap", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.twogis_cap = ctk.CTkEntry(form, width=150, fg_color=BG_VOID, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        ctk.CTkLabel(form, text="Total Leads to Save", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.twogis_cap = ctk.CTkEntry(form, width=150, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
         self.twogis_cap.pack(anchor="w", padx=20)
         self.twogis_cap.insert(0, "2000")
 
-        self.twogis_btn = ctk.CTkButton(frame, text="Initiate Extraction", fg_color=ACCENT_BLOOD, hover_color=ACCENT_HOVER, corner_radius=8, command=self._start_twogis)
+        self.twogis_btn = ctk.CTkButton(frame, text="Start Scraping", fg_color=NEON_PURPLE, hover_color=HOVER_PURPLE, corner_radius=10, command=self._start_twogis)
         self.twogis_btn.pack(anchor="w", pady=20)
 
     def _build_history_view(self):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frames["history"] = frame
 
-        title = ctk.CTkLabel(frame, text="Vault Checkpoints", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_PRIMARY)
+        title = ctk.CTkLabel(frame, text="History & Resume", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(5, 15))
 
         self.scroll_hist = ctk.CTkScrollableFrame(frame, fg_color="transparent", corner_radius=0)
@@ -240,22 +246,22 @@ class JiyaApp(ctk.CTk):
 
         history = load_all_history()
         if not history:
-            ctk.CTkLabel(self.scroll_hist, text="No checkpoints found.", text_color=TEXT_MUTED).pack(pady=20)
+            ctk.CTkLabel(self.scroll_hist, text="No history found.", text_color=TEXT_GRAY).pack(pady=20)
             return
 
         for idx, item in enumerate(history):
-            card = ctk.CTkFrame(self.scroll_hist, fg_color=CARD_GLASS, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=12)
+            card = ctk.CTkFrame(self.scroll_hist, fg_color=CARD_COLOR, border_width=1, border_color=NEON_PURPLE, corner_radius=12)
             card.pack(fill="x", pady=5)
             
             eng = str(item.get("engine", "")).upper()
-            tgt = str(item.get("target", ""))[:40]
+            tgt = str(item.get("target", ""))[:35]
             svd = item.get("total_saved", 0)
             step = item.get("last_step", 1)
 
-            info = ctk.CTkLabel(card, text=f"[{eng}] {tgt}  |  {svd} Leads  |  Step {step}", font=ctk.CTkFont(size=12), text_color=TEXT_PRIMARY)
+            info = ctk.CTkLabel(card, text=f"[{eng}] {tgt}  |  {svd} Leads  |  Step {step}", font=ctk.CTkFont(size=12), text_color=TEXT_WHITE)
             info.pack(side="left", padx=15, pady=15)
 
-            btn = ctk.CTkButton(card, text="Resume", width=80, fg_color=BG_VOID, border_width=1, border_color=ACCENT_BLOOD, hover_color=SIDEBAR_GLASS, command=lambda i=item: self._resume_task(i))
+            btn = ctk.CTkButton(card, text="Resume", width=70, fg_color=BG_COLOR, border_width=1, border_color=NEON_PURPLE, hover_color=HOVER_PURPLE, command=lambda i=item: self._resume_task(i))
             btn.pack(side="right", padx=15)
 
     def _resume_task(self, item):
@@ -277,51 +283,79 @@ class JiyaApp(ctk.CTk):
             self.twogis_cap.insert(0, str(item.get("target_count", 0)))
             self.select_frame("2gis")
         
-        self.write_log("Checkpoint loaded. Ready for initiation.")
+        self.write_log("Loaded from history. Ready to resume.")
 
     def _build_profile_view(self):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frames["profile"] = frame
 
-        title = ctk.CTkLabel(frame, text="Architect Protocol", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_PRIMARY)
-        title.pack(anchor="w", pady=(5, 15))
+        title = ctk.CTkLabel(frame, text="Developer", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
+        title.pack(anchor="w", pady=(5, 10))
 
-        card = ctk.CTkFrame(frame, fg_color=CARD_GLASS, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=15)
-        card.pack(fill="x", ipady=10)
+        card = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
+        card.pack(fill="both", expand=True, pady=10)
 
-        header = ctk.CTkLabel(card, text="Reinhart aka Kiri", font=ctk.CTkFont(size=20, weight="bold"), text_color=TEXT_PRIMARY)
-        header.pack(anchor="w", padx=20, pady=(15, 2))
+        # Profile Picture & Intro Row
+        top_row = ctk.CTkFrame(card, fg_color="transparent")
+        top_row.pack(fill="x", padx=20, pady=20)
+
+        self.dev_avatar_lbl = ctk.CTkLabel(top_row, text="")
+        self.dev_avatar_lbl.pack(side="left", padx=(0, 20))
         
-        sub = ctk.CTkLabel(card, text="Lead Architect & Systems Engineer", font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
-        sub.pack(anchor="w", padx=20, pady=(0, 15))
+        # Fetch the round avatar safely
+        def fetch_dev_avatar():
+            try:
+                url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                raw_data = urllib.request.urlopen(req, timeout=5).read()
+                img = Image.open(BytesIO(raw_data)).convert("RGBA")
+                size = (80, 80)
+                img = img.resize(size, Image.Resampling.LANCZOS)
+                
+                mask = Image.new("L", size, 0)
+                draw = ImageDraw.Draw(mask)
+                draw.ellipse((0, 0) + size, fill=255)
+                
+                output = Image.new("RGBA", size, (0, 0, 0, 0))
+                output.paste(img, (0, 0), mask)
+                
+                new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
+                self.after(0, lambda: self.dev_avatar_lbl.configure(image=new_img))
+            except Exception:
+                pass
+        threading.Thread(target=fetch_dev_avatar, daemon=True).start()
 
-        self.open_in_browser = ctk.BooleanVar(value=True)
-        toggle = ctk.CTkSwitch(card, text="Open links externally", variable=self.open_in_browser, progress_color=ACCENT_BLOOD, button_color=TEXT_PRIMARY, button_hover_color=TEXT_MUTED)
-        toggle.pack(anchor="w", padx=20, pady=(0, 15))
+        info_frame = ctk.CTkFrame(top_row, fg_color="transparent")
+        info_frame.pack(side="left", fill="both", expand=True)
+
+        ctk.CTkLabel(info_frame, text="Reinhart aka Kiri", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w")
+        ctk.CTkLabel(info_frame, text="Lead Developer", font=ctk.CTkFont(size=14), text_color=TEXT_GRAY).pack(anchor="w")
+        
+        quote = '"We do not do it because it\'s easy. We do it because we thought it would be easy."'
+        ctk.CTkLabel(info_frame, text=quote, font=ctk.CTkFont(size=12, slant="italic"), text_color=NEON_PURPLE).pack(anchor="w", pady=(10, 0))
+
+        # Links Section
+        links_frame = ctk.CTkFrame(card, fg_color="transparent")
+        links_frame.pack(fill="x", padx=20, pady=10)
+        
+        ctk.CTkLabel(links_frame, text="Connect & Portfolio", font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", pady=(0, 10))
 
         links = [
-            ("Portfolio", "@reinhart.dev", "https://reinhart.pages.dev"),
-            ("Telegram", "@kiri0507", "https://t.me/kiri0507?text=Hello%20%2C%20i%20just%20saw%20your%20resume%20and%20came%20to%20ask%20about%20it"),
-            ("WhatsApp", "+1 (315) 370-1897", "https://wa.me/13153701897?text=Hi%2C%20saw%20your%20resume%20Have%20a%20proposal%20for%20you"),
+            ("Portfolio", "reinhart.pages.dev", "https://reinhart.pages.dev"),
+            ("Telegram", "@kiri0507", "https://t.me/kiri0507"),
+            ("WhatsApp", "+1 (315) 370-1897", "https://wa.me/13153701897"),
             ("GitHub", "Reinhart-py", "https://github.com/Reinhart-py"),
-            ("X / Twitter", "@reinhartDev", "https://x.com/reinhartDev"),
+            ("Twitter", "@reinhartDev", "https://x.com/reinhartDev"),
+            ("Instagram", "@reinhart.dev", "https://www.instagram.com/reinhart.dev/"),
         ]
 
         for platform, handle, url in links:
-            row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(anchor="w", padx=20, pady=2, fill="x")
-            lbl_plat = ctk.CTkLabel(row, text=platform, width=90, anchor="w", font=ctk.CTkFont(size=12, weight="bold"))
-            lbl_plat.pack(side="left")
-            lbl_link = ctk.CTkLabel(row, text=handle, text_color=ACCENT_BLOOD, cursor="hand2", font=ctk.CTkFont(size=12))
+            row = ctk.CTkFrame(links_frame, fg_color="transparent")
+            row.pack(anchor="w", pady=4, fill="x")
+            ctk.CTkLabel(row, text=platform, width=100, anchor="w", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_GRAY).pack(side="left")
+            lbl_link = ctk.CTkLabel(row, text=handle, text_color=NEON_PURPLE, cursor="hand2", font=ctk.CTkFont(size=12))
             lbl_link.pack(side="left")
-            lbl_link.bind("<Button-1>", lambda e, u=url: self._handle_link(u))
-
-    def _handle_link(self, url: str):
-        if self.open_in_browser.get():
-            webbrowser.open(url)
-        else:
-            self.write_log(f"Hyperlink intercepted: {url}")
-            self.select_frame("dashboard")
+            lbl_link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
 
     def select_frame(self, name: str):
         for key, frame in self.frames.items():
@@ -329,7 +363,7 @@ class JiyaApp(ctk.CTk):
         self.frames[name].pack(expand=True, fill="both")
 
         for key, btn in self.nav_btns.items():
-            btn.configure(fg_color=CARD_GLASS if key == name else "transparent")
+            btn.configure(fg_color=CARD_COLOR if key == name else "transparent")
             
         if name == "history":
             self.refresh_history()
@@ -352,11 +386,11 @@ class JiyaApp(ctk.CTk):
         target = self.gmaps_input.get()
         cap = int(self.gmaps_cap.get()) if self.gmaps_cap.get().isdigit() else 0
         
-        out_path = os.path.join(os.path.expanduser("~"), "Downloads", f"gmaps_{target.replace(' ', '_')[:20]}.csv")
+        out_path = os.path.join(os.path.expanduser("~"), "Downloads", f"gmaps_leads.csv")
         out_path = self.resume_state.get("output_path", out_path)
         start_idx = self.resume_state.get("last_step", 0)
         
-        self.write_log(f"❖ GMAPS ENGINE IGNITED ❖ Target: {target}")
+        self.write_log(f"Starting Google Maps scraper for: {target}")
         self.resume_state = {}
         
         def run_task():
@@ -366,7 +400,7 @@ class JiyaApp(ctk.CTk):
             finally:
                 self.is_running = False
                 self.after(0, lambda: self.gmaps_btn.configure(state="normal"))
-                self.write_log("Task complete or terminated.")
+                self.write_log("Finished.")
 
         threading.Thread(target=run_task, daemon=True).start()
 
@@ -380,12 +414,12 @@ class JiyaApp(ctk.CTk):
         query = self.twogis_query.get().strip()
         cap = int(self.twogis_cap.get()) if self.twogis_cap.get().isdigit() else 0
         
-        out_path = os.path.join(os.path.expanduser("~"), "Downloads", f"2gis_{city}_{query.replace(' ', '_')[:20]}.csv")
+        out_path = os.path.join(os.path.expanduser("~"), "Downloads", f"2gis_leads.csv")
         out_path = self.resume_state.get("output_path", out_path)
         start_page = self.resume_state.get("last_step", 1)
         init_saved = self.resume_state.get("total_saved", 0)
         
-        self.write_log(f"❖ 2GIS ENGINE IGNITED ❖ Region: {city.upper()} | Query: {query}")
+        self.write_log(f"Starting 2GIS scraper for: {city} - {query}")
         self.resume_state = {}
         
         def run_task():
@@ -405,6 +439,6 @@ class JiyaApp(ctk.CTk):
             finally:
                 self.is_running = False
                 self.after(0, lambda: self.twogis_btn.configure(state="normal"))
-                self.write_log("Task complete or terminated.")
+                self.write_log("Finished.")
 
         threading.Thread(target=run_task, daemon=True).start()
