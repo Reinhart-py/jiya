@@ -18,16 +18,16 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: Jiya_Windows.exe
-            output_binary: dist/Jiya.exe
+            artifact_name: Kiri_Windows.exe
+            output_binary: dist/Kiri.exe
             sep: ";"
           - os: ubuntu-latest
-            artifact_name: Jiya_Linux
-            output_binary: dist/Jiya
+            artifact_name: Kiri_Linux
+            output_binary: dist/Kiri
             sep: ":"
           - os: macos-latest
-            artifact_name: Jiya_macOS
-            output_binary: dist/Jiya
+            artifact_name: Kiri_macOS
+            output_binary: dist/Kiri
             sep: ":"
 
     steps:
@@ -54,7 +54,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           pyinstaller --noconfirm --onefile --windowed `
-            --name "Jiya" `
+            --name "Kiri" `
             --icon "images/icon.ico" `
             --add-data "images${{ matrix.sep }}images" `
             --collect-all customtkinter `
@@ -64,7 +64,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           pyinstaller --noconfirm --onefile --windowed \
-            --name "Jiya" \
+            --name "Kiri" \
             --add-data "images${{ matrix.sep }}images" \
             --collect-all customtkinter \
             main.py
@@ -90,26 +90,26 @@ jobs:
       - name: Download Windows Binary
         uses: actions/download-artifact@v4
         with:
-          name: Jiya_Windows.exe
+          name: Kiri_Windows.exe
           path: release_assets
 
       - name: Download Linux Binary
         uses: actions/download-artifact@v4
         with:
-          name: Jiya_Linux
+          name: Kiri_Linux
           path: release_assets
 
       - name: Download macOS Binary
         uses: actions/download-artifact@v4
         with:
-          name: Jiya_macOS
+          name: Kiri_macOS
           path: release_assets
 
       - name: Publish Release Assets
         uses: softprops/action-gh-release@v2
         with:
           files: release_assets/*
-          name: Release ${{ github.ref_name }}
+          name: Kiri ${{ github.ref_name }}
           draft: false
           prerelease: false
         env:
