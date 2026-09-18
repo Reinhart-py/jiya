@@ -3,7 +3,6 @@ import threading
 import urllib.request
 import webbrowser
 from io import BytesIO
-from typing import Optional
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw
@@ -61,28 +60,43 @@ class JiyaApp(ctk.CTk):
 
         self.frames = {}
 
-    def _get_rounded_avatar(self, size=(60, 60)):
+    def _fetch_avatar_bg(self, size):
+        """Fetches the avatar safely in a background thread so the UI doesn't crash on boot"""
         try:
             url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            raw_data = urllib.request.urlopen(req).read()
+            raw_data = urllib.request.urlopen(req, timeout=5).read()
             img = Image.open(BytesIO(raw_data)).convert("RGBA")
+            img = img.resize(size, Image.Resampling.LANCZOS)
+            
+            mask = Image.new("L", size, 0)
+            draw = ImageDraw.Draw(mask)
+            draw.ellipse((0, 0) + size, fill=255)
+            
+            output = Image.new("RGBA", size, (0, 0, 0, 0))
+            output.paste(img, (0, 0), mask)
+            
+            new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
+            self.after(0, lambda: self.avatar_lbl.configure(image=new_img))
         except Exception:
-            img = Image.new("RGBA", size, (185, 28, 28, 255))
-        
-        img = img.resize(size, Image.Resampling.LANCZOS)
+            pass # Keep default placeholder
+
+    def _build_sidebar(self):
+        # 1. Create immediate placeholder (so UI boots instantly)
+        size = (50, 50)
+        img = Image.new("RGBA", size, (185, 28, 28, 255))
         mask = Image.new("L", size, 0)
         draw = ImageDraw.Draw(mask)
         draw.ellipse((0, 0) + size, fill=255)
-        
         output = Image.new("RGBA", size, (0, 0, 0, 0))
         output.paste(img, (0, 0), mask)
-        return ctk.CTkImage(light_image=output, dark_image=output, size=size)
+        
+        self.avatar_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
+        self.avatar_lbl = ctk.CTkLabel(self.sidebar_frame, image=self.avatar_img, text="")
+        self.avatar_lbl.grid(row=0, column=0, pady=(25, 5))
 
-    def _build_sidebar(self):
-        self.avatar_img = self._get_rounded_avatar((50, 50))
-        avatar_lbl = ctk.CTkLabel(self.sidebar_frame, image=self.avatar_img, text="")
-        avatar_lbl.grid(row=0, column=0, pady=(25, 5))
+        # 2. Fire network request in the background
+        threading.Thread(target=self._fetch_avatar_bg, args=(size,), daemon=True).start()
 
         title_lbl = ctk.CTkLabel(self.sidebar_frame, text="JIYA SUITE", font=ctk.CTkFont(size=14, weight="bold", tracking=2), text_color=ACCENT_BLOOD)
         title_lbl.grid(row=1, column=0, pady=(0, 25))
