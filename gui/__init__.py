@@ -1,3 +1,3 @@
-from .app import JiyaApp
+from .app import KiriApp
 
-__all__ = ["JiyaApp"]
+__all__ = ["KiriApp"]
