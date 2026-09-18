@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import urllib.request
 import webbrowser
 from io import BytesIO
@@ -10,16 +11,18 @@ from PIL import Image, ImageDraw
 from gmaps.runner import GMapsRunner
 from runner.runner import Runner as TwoGISRunner
 from utils.state_manager import load_all_history
+from utils.security import get_saved_key, verify_key_payload, save_key
 
 ctk.set_appearance_mode("dark")
 
 # ◈ NEON GLOSSY COLOR PALETTE ◈
-BG_COLOR = "#050505"           # Pitch black background
-CARD_COLOR = "#0D0D0D"         # Slightly raised black for cards
-NEON_PURPLE = "#A855F7"        # Glowing shiny purple edge
-HOVER_PURPLE = "#7E22CE"       # Darker purple for button hovers
+BG_COLOR = "#050505"           # Deep pitch black
+CARD_COLOR = "#0D0D0D"         # Inner card black
+NEON_PURPLE = "#A855F7"        # Glowing shiny edge
+HOVER_PURPLE = "#7E22CE"       # Button hovers
 TEXT_WHITE = "#FFFFFF"
 TEXT_GRAY = "#9CA3AF"
+ERROR_RED = "#DC2626"
 
 class KiriApp(ctk.CTk):
     def __init__(self):
@@ -29,14 +32,25 @@ class KiriApp(ctk.CTk):
         self.geometry("820x520")
         self.minsize(750, 480)
         self.configure(fg_color=BG_COLOR)
+        
+        # ◈ FIX: Set the OS Window Icon to your Logo ◈
+        try:
+            logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images", "icon.ico")
+            if not os.path.exists(logo_path): logo_path = "images/icon.ico"
+            self.iconbitmap(logo_path)
+        except Exception:
+            pass # Fallback if run on Linux/Mac where .ico isn't supported natively
 
         self.current_thread = None
         self.is_running = False
         self.resume_state = {}
         self.icons = {}
+        self.license_info = {"owner": "", "expires": ""}
 
-        self._build_layout()
         self._load_ui_icons()
+        self._build_layout()
+        
+        self._build_auth_view()
         self._build_sidebar()
         self._build_dashboard()
         self._build_gmaps_view()
@@ -44,7 +58,54 @@ class KiriApp(ctk.CTk):
         self._build_history_view()
         self._build_profile_view()
 
+        # Start by showing the authentication lock screen
+        self.sidebar_frame.grid_remove()
+        self.main_frame.grid_remove()
+        self.select_frame("auth")
+        
+        # Auto-verify saved key on startup
+        threading.Thread(target=self._auto_login, daemon=True).start()
+
+    def _auto_login(self):
+        saved = get_saved_key()
+        if saved:
+            self.after(0, lambda: self.auth_status.configure(text="Verifying key...", text_color=TEXT_GRAY))
+            res = verify_key_payload(saved)
+            if res["passed"]:
+                self.license_info = {"owner": res["owner"], "expires": res.get("expires", "Active")}
+                self.after(0, self._unlock_app)
+                # Start Heartbeat checking
+                threading.Thread(target=self._license_heartbeat, args=(saved,), daemon=True).start()
+            else:
+                self.after(0, lambda: self.auth_status.configure(text=res["msg"], text_color=ERROR_RED))
+                self.after(0, lambda: self.auth_btn.configure(state="normal"))
+
+    def _license_heartbeat(self, key):
+        """Continuously checks server every 10 minutes to kill app if key expires"""
+        while True:
+            time.sleep(600) # 10 mins
+            res = verify_key_payload(key)
+            if not res["passed"]:
+                self.after(0, self._lock_app)
+                break
+
+    def _unlock_app(self):
+        self.frames["auth"].grid_forget()
+        self.sidebar_frame.grid()
+        self.main_frame.grid()
         self.select_frame("dashboard")
+        
+        # Update UI with license owner
+        self.user_display_lbl.configure(text=self.license_info["owner"].upper())
+        self.dash_owner_lbl.configure(text=self.license_info["owner"])
+        self.dash_exp_lbl.configure(text=self.license_info["expires"])
+
+    def _lock_app(self):
+        self.sidebar_frame.grid_remove()
+        self.main_frame.grid_remove()
+        self.select_frame("auth")
+        self.auth_status.configure(text="Session expired or key revoked.", text_color=ERROR_RED)
+        self.auth_btn.configure(state="normal")
 
     def _build_layout(self):
         self.grid_rowconfigure(0, weight=1)
@@ -61,69 +122,124 @@ class KiriApp(ctk.CTk):
 
         self.frames = {}
 
+    def _create_shiny_card(self, parent, padding=2):
+        """Creates a smooth glowing border by stacking frames"""
+        outer = ctk.CTkFrame(parent, fg_color=NEON_PURPLE, corner_radius=15)
+        inner = ctk.CTkFrame(outer, fg_color=CARD_COLOR, corner_radius=14)
+        inner.pack(fill="both", expand=True, padx=padding, pady=padding)
+        return outer, inner
+
     def _load_ui_icons(self):
-        """Fetches proper sleek white icons in the background so the app boots instantly"""
-        icon_urls = {
+        urls = {
+            "telegram": "https://img.icons8.com/color/48/telegram-app.png",
+            "whatsapp": "https://img.icons8.com/color/48/whatsapp--v1.png",
             "dashboard": "https://img.icons8.com/ios-filled/50/ffffff/dashboard.png",
             "gmaps": "https://img.icons8.com/ios-filled/50/ffffff/google-maps.png",
             "2gis": "https://img.icons8.com/ios-filled/50/ffffff/globe.png",
             "history": "https://img.icons8.com/ios-filled/50/ffffff/time-machine.png",
             "profile": "https://img.icons8.com/ios-filled/50/ffffff/user.png"
         }
-
         def fetch():
-            for name, url in icon_urls.items():
+            for name, url in urls.items():
                 try:
                     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                     raw_data = urllib.request.urlopen(req, timeout=3).read()
                     img = Image.open(BytesIO(raw_data)).convert("RGBA")
-                    self.icons[name] = ctk.CTkImage(light_image=img, dark_image=img, size=(18, 18))
+                    self.icons[name] = ctk.CTkImage(light_image=img, dark_image=img, size=(20, 20))
                     
-                    # Update buttons if they are already drawn
                     if hasattr(self, 'nav_btns') and name in self.nav_btns:
                         self.after(0, lambda n=name: self.nav_btns[n].configure(image=self.icons[n]))
+                    if hasattr(self, 'contact_btns') and name in self.contact_btns:
+                        self.after(0, lambda n=name: self.contact_btns[n].configure(image=self.icons[n]))
                 except Exception:
                     pass
         threading.Thread(target=fetch, daemon=True).start()
 
+    def _build_auth_view(self):
+        frame = ctk.CTkFrame(self, fg_color=BG_COLOR)
+        self.frames["auth"] = frame
+        frame.grid_rowconfigure((0, 3), weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        outer, inner = self._create_shiny_card(frame, padding=2)
+        outer.grid(row=1, column=0, ipadx=20, ipady=20)
+
+        ctk.CTkLabel(inner, text="KIRI ENGINE", font=ctk.CTkFont(size=24, weight="bold"), text_color=NEON_PURPLE).pack(pady=(20, 5))
+        ctk.CTkLabel(inner, text="Enter License Key to proceed", text_color=TEXT_GRAY).pack(pady=(0, 15))
+
+        self.auth_input = ctk.CTkEntry(inner, width=280, justify="center", show="•", fg_color=BG_COLOR, border_color=NEON_PURPLE)
+        self.auth_input.pack(pady=10)
+
+        self.auth_status = ctk.CTkLabel(inner, text="", text_color=ERROR_RED, font=ctk.CTkFont(size=11))
+        self.auth_status.pack()
+
+        self.auth_btn = ctk.CTkButton(inner, text="Authenticate", fg_color=NEON_PURPLE, hover_color=HOVER_PURPLE, command=self._do_login)
+        self.auth_btn.pack(pady=15)
+
+        # Contact Bar
+        c_bar = ctk.CTkFrame(inner, fg_color="transparent")
+        c_bar.pack(pady=(10, 5))
+        ctk.CTkLabel(c_bar, text="No key?", text_color=TEXT_GRAY, font=ctk.CTkFont(size=12)).pack(side="left", padx=10)
+        
+        self.contact_btns = {}
+        tb = ctk.CTkButton(c_bar, text="", width=30, fg_color="transparent", hover_color=CARD_COLOR, command=lambda: webbrowser.open("https://t.me/kiri0507"))
+        tb.pack(side="left", padx=5)
+        wb = ctk.CTkButton(c_bar, text="", width=30, fg_color="transparent", hover_color=CARD_COLOR, command=lambda: webbrowser.open("https://wa.me/13153701897"))
+        wb.pack(side="left", padx=5)
+        
+        self.contact_btns["telegram"] = tb
+        self.contact_btns["whatsapp"] = wb
+
+    def _do_login(self):
+        key = self.auth_input.get().strip()
+        if not key: return
+        self.auth_btn.configure(state="disabled")
+        self.auth_status.configure(text="Connecting to Mothership...", text_color=TEXT_GRAY)
+        
+        def run_auth():
+            res = verify_key_payload(key)
+            if res["passed"]:
+                save_key(key)
+                self.license_info = {"owner": res["owner"], "expires": res.get("expires", "Active")}
+                self.after(0, self._unlock_app)
+                threading.Thread(target=self._license_heartbeat, args=(key,), daemon=True).start()
+            else:
+                self.after(0, lambda: self.auth_status.configure(text=res["msg"], text_color=ERROR_RED))
+                self.after(0, lambda: self.auth_btn.configure(state="normal"))
+        
+        threading.Thread(target=run_auth, daemon=True).start()
+
     def _build_sidebar(self):
-        # Load the local logo1.png
         try:
             logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images", "logo1.png")
             if not os.path.exists(logo_path): logo_path = "images/logo1.png"
             logo_img = Image.open(logo_path).convert("RGBA")
             self.logo_ctk = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(70, 70))
         except Exception:
-            # Fallback if image folder is missing
             logo_img = Image.new("RGBA", (70, 70), (0, 0, 0, 0))
             self.logo_ctk = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(70, 70))
 
         logo_lbl = ctk.CTkLabel(self.sidebar_frame, image=self.logo_ctk, text="")
-        logo_lbl.grid(row=0, column=0, pady=(20, 5))
+        logo_lbl.grid(row=0, column=0, pady=(20, 0))
 
-        title_lbl = ctk.CTkLabel(self.sidebar_frame, text="K I R I", font=ctk.CTkFont(size=18, weight="bold"), text_color=NEON_PURPLE)
-        title_lbl.grid(row=1, column=0, pady=(0, 25))
+        # Show License Owner dynamically
+        self.user_display_lbl = ctk.CTkLabel(self.sidebar_frame, text="...", font=ctk.CTkFont(size=14, weight="bold"), text_color=NEON_PURPLE)
+        self.user_display_lbl.grid(row=1, column=0, pady=(0, 25))
 
         nav_buttons = [
             ("dashboard", " Dashboard"),
             ("gmaps", " Google Maps"),
             ("2gis", " 2GIS Global"),
             ("history", " History"),
-            ("profile", " Developer"),
+            ("profile", " Settings"),
         ]
 
         self.nav_btns = {}
         for i, (key, text) in enumerate(nav_buttons):
             btn = ctk.CTkButton(
-                self.sidebar_frame,
-                text=text,
-                image=self.icons.get(key, None),
-                fg_color="transparent",
-                text_color=TEXT_WHITE,
-                hover_color=CARD_COLOR,
-                anchor="w",
-                corner_radius=12,
-                font=ctk.CTkFont(size=13),
+                self.sidebar_frame, text=text, fg_color="transparent",
+                text_color=TEXT_WHITE, hover_color=CARD_COLOR, anchor="w",
+                corner_radius=12, font=ctk.CTkFont(size=13),
                 command=lambda k=key: self.select_frame(k)
             )
             btn.grid(row=i+2, column=0, padx=15, pady=4, sticky="ew")
@@ -136,35 +252,47 @@ class KiriApp(ctk.CTk):
         title = ctk.CTkLabel(frame, text="Dashboard", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.grid(row=0, column=0, sticky="w", pady=(5, 15))
 
+        # Top Stats
         stats_frame = ctk.CTkFrame(frame, fg_color="transparent")
         stats_frame.grid(row=1, column=0, sticky="ew")
-        stats_frame.grid_columnconfigure((0, 1), weight=1)
+        stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         history = load_all_history()
         total_leads = sum(h.get("total_saved", 0) for h in history)
 
         self._create_stat_card(stats_frame, "Total Sessions", str(len(history)), 0)
         self._create_stat_card(stats_frame, "Leads Saved", f"{total_leads:,}", 1)
+        
+        # License Card
+        lic_outer, lic_inner = self._create_shiny_card(stats_frame, 1)
+        lic_outer.grid(row=0, column=2, sticky="ew", padx=8)
+        lic_inner.pack_propagate(False)
+        ctk.CTkLabel(lic_inner, text="License Info", font=ctk.CTkFont(size=11), text_color=TEXT_GRAY).pack(anchor="w", padx=15, pady=(10, 0))
+        self.dash_owner_lbl = ctk.CTkLabel(lic_inner, text="...", font=ctk.CTkFont(size=14, weight="bold"), text_color=NEON_PURPLE)
+        self.dash_owner_lbl.pack(anchor="w", padx=15)
+        self.dash_exp_lbl = ctk.CTkLabel(lic_inner, text="...", font=ctk.CTkFont(size=11), text_color=TEXT_GRAY)
+        self.dash_exp_lbl.pack(anchor="w", padx=15)
 
-        log_frame = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
-        log_frame.grid(row=2, column=0, sticky="nsew", pady=15)
+        # Log Output (Shiny Border)
+        log_outer, log_inner = self._create_shiny_card(frame, 2)
+        log_outer.grid(row=2, column=0, sticky="nsew", pady=15)
         frame.grid_rowconfigure(2, weight=1)
 
-        lbl = ctk.CTkLabel(log_frame, text="Log Output", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_GRAY)
+        lbl = ctk.CTkLabel(log_inner, text="Log Output", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_GRAY)
         lbl.pack(anchor="w", padx=15, pady=(10, 0))
 
-        self.sys_log = ctk.CTkTextbox(log_frame, fg_color="transparent", text_color=TEXT_WHITE, font=ctk.CTkFont(size=12))
+        self.sys_log = ctk.CTkTextbox(log_inner, fg_color="transparent", text_color=TEXT_WHITE, font=ctk.CTkFont(size=12))
         self.sys_log.pack(expand=True, fill="both", padx=10, pady=10)
         self.sys_log.configure(state="disabled")
 
     def _create_stat_card(self, parent, title, value, col):
-        card = ctk.CTkFrame(parent, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15, height=90)
-        card.grid(row=0, column=col, sticky="ew", padx=8)
-        card.pack_propagate(False)
+        outer, inner = self._create_shiny_card(parent, 2)
+        outer.grid(row=0, column=col, sticky="ew", padx=8)
+        inner.pack_propagate(False)
 
-        lbl_val = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=28, weight="bold"), text_color=NEON_PURPLE)
+        lbl_val = ctk.CTkLabel(inner, text=value, font=ctk.CTkFont(size=28, weight="bold"), text_color=NEON_PURPLE)
         lbl_val.pack(anchor="w", padx=15, pady=(10, 0))
-        lbl_title = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12), text_color=TEXT_GRAY)
+        lbl_title = ctk.CTkLabel(inner, text=title, font=ctk.CTkFont(size=12), text_color=TEXT_GRAY)
         lbl_title.pack(anchor="w", padx=15)
 
     def _build_gmaps_view(self):
@@ -174,22 +302,21 @@ class KiriApp(ctk.CTk):
         title = ctk.CTkLabel(frame, text="Google Maps", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(5, 15))
 
-        form = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
-        form.pack(fill="x", ipady=10)
+        outer, inner = self._create_shiny_card(frame, 2)
+        outer.pack(fill="x")
 
-        ctk.CTkLabel(form, text="Search Query / Maps URL / Batch File", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        ctk.CTkLabel(inner, text="Search Query / Maps URL / Batch File", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
         
-        row = ctk.CTkFrame(form, fg_color="transparent")
+        row = ctk.CTkFrame(inner, fg_color="transparent")
         row.pack(fill="x", padx=20)
-        self.gmaps_input = ctk.CTkEntry(row, width=320, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
+        self.gmaps_input = ctk.CTkEntry(row, width=320, fg_color=BG_COLOR, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=8)
         self.gmaps_input.pack(side="left")
-        self.gmaps_input.insert(0, "Software in Business Bay")
         
         ctk.CTkButton(row, text="Browse", width=80, fg_color=BG_COLOR, border_color=NEON_PURPLE, border_width=1, hover_color=HOVER_PURPLE, command=self._browse_file).pack(side="left", padx=10)
 
-        ctk.CTkLabel(form, text="Total Leads to Save (0 for unlimited)", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.gmaps_cap = ctk.CTkEntry(form, width=150, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
-        self.gmaps_cap.pack(anchor="w", padx=20)
+        ctk.CTkLabel(inner, text="Total Leads to Save (0 for unlimited)", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.gmaps_cap = ctk.CTkEntry(inner, width=150, fg_color=BG_COLOR, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        self.gmaps_cap.pack(anchor="w", padx=20, pady=(0, 20))
         self.gmaps_cap.insert(0, "1000")
 
         self.gmaps_btn = ctk.CTkButton(frame, text="Start Scraping", fg_color=NEON_PURPLE, hover_color=HOVER_PURPLE, corner_radius=10, command=self._start_gmaps)
@@ -208,22 +335,22 @@ class KiriApp(ctk.CTk):
         title = ctk.CTkLabel(frame, text="2GIS Scraper", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(5, 15))
 
-        form = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
-        form.pack(fill="x", ipady=10)
+        outer, inner = self._create_shiny_card(frame, 2)
+        outer.pack(fill="x")
 
-        ctk.CTkLabel(form, text="City Name", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.twogis_city = ctk.CTkEntry(form, width=320, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
+        ctk.CTkLabel(inner, text="City Name", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.twogis_city = ctk.CTkEntry(inner, width=320, fg_color=BG_COLOR, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=8)
         self.twogis_city.pack(anchor="w", padx=20)
         self.twogis_city.insert(0, "Dubai")
 
-        ctk.CTkLabel(form, text="Search Keyword", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.twogis_query = ctk.CTkEntry(form, width=320, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
+        ctk.CTkLabel(inner, text="Search Keyword", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.twogis_query = ctk.CTkEntry(inner, width=320, fg_color=BG_COLOR, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=8)
         self.twogis_query.pack(anchor="w", padx=20)
         self.twogis_query.insert(0, "Software")
 
-        ctk.CTkLabel(form, text="Total Leads to Save", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
-        self.twogis_cap = ctk.CTkEntry(form, width=150, fg_color=BG_COLOR, border_color=NEON_PURPLE, corner_radius=8)
-        self.twogis_cap.pack(anchor="w", padx=20)
+        ctk.CTkLabel(inner, text="Total Leads to Save", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20, pady=(15, 5))
+        self.twogis_cap = ctk.CTkEntry(inner, width=150, fg_color=BG_COLOR, border_width=1, border_color=BORDER_HIGHLIGHT, corner_radius=8)
+        self.twogis_cap.pack(anchor="w", padx=20, pady=(0, 20))
         self.twogis_cap.insert(0, "2000")
 
         self.twogis_btn = ctk.CTkButton(frame, text="Start Scraping", fg_color=NEON_PURPLE, hover_color=HOVER_PURPLE, corner_radius=10, command=self._start_twogis)
@@ -238,7 +365,6 @@ class KiriApp(ctk.CTk):
 
         self.scroll_hist = ctk.CTkScrollableFrame(frame, fg_color="transparent", corner_radius=0)
         self.scroll_hist.pack(expand=True, fill="both")
-        self.refresh_history()
 
     def refresh_history(self):
         for widget in self.scroll_hist.winfo_children():
@@ -250,24 +376,23 @@ class KiriApp(ctk.CTk):
             return
 
         for idx, item in enumerate(history):
-            card = ctk.CTkFrame(self.scroll_hist, fg_color=CARD_COLOR, border_width=1, border_color=NEON_PURPLE, corner_radius=12)
-            card.pack(fill="x", pady=5)
+            outer, inner = self._create_shiny_card(self.scroll_hist, 1)
+            outer.pack(fill="x", pady=5)
             
             eng = str(item.get("engine", "")).upper()
             tgt = str(item.get("target", ""))[:35]
             svd = item.get("total_saved", 0)
             step = item.get("last_step", 1)
 
-            info = ctk.CTkLabel(card, text=f"[{eng}] {tgt}  |  {svd} Leads  |  Step {step}", font=ctk.CTkFont(size=12), text_color=TEXT_WHITE)
+            info = ctk.CTkLabel(inner, text=f"[{eng}] {tgt}  |  {svd} Leads  |  Step {step}", font=ctk.CTkFont(size=12), text_color=TEXT_WHITE)
             info.pack(side="left", padx=15, pady=15)
 
-            btn = ctk.CTkButton(card, text="Resume", width=70, fg_color=BG_COLOR, border_width=1, border_color=NEON_PURPLE, hover_color=HOVER_PURPLE, command=lambda i=item: self._resume_task(i))
+            btn = ctk.CTkButton(inner, text="Resume", width=70, fg_color=BG_COLOR, border_width=1, border_color=NEON_PURPLE, hover_color=HOVER_PURPLE, command=lambda i=item: self._resume_task(i))
             btn.pack(side="right", padx=15)
 
     def _resume_task(self, item):
         self.resume_state = item
         engine = item.get("engine")
-        
         if engine == "gmaps":
             self.gmaps_input.delete(0, "end")
             self.gmaps_input.insert(0, item.get("target", ""))
@@ -282,85 +407,52 @@ class KiriApp(ctk.CTk):
             self.twogis_cap.delete(0, "end")
             self.twogis_cap.insert(0, str(item.get("target_count", 0)))
             self.select_frame("2gis")
-        
         self.write_log("Loaded from history. Ready to resume.")
 
     def _build_profile_view(self):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.frames["profile"] = frame
 
-        title = ctk.CTkLabel(frame, text="Developer", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
+        title = ctk.CTkLabel(frame, text="Settings & License", font=ctk.CTkFont(size=26, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(5, 10))
 
-        card = ctk.CTkFrame(frame, fg_color=CARD_COLOR, border_width=2, border_color=NEON_PURPLE, corner_radius=15)
-        card.pack(fill="both", expand=True, pady=10)
+        outer, inner = self._create_shiny_card(frame, 2)
+        outer.pack(fill="both", expand=True, pady=10)
 
-        # Profile Picture & Intro Row
-        top_row = ctk.CTkFrame(card, fg_color="transparent")
-        top_row.pack(fill="x", padx=20, pady=20)
+        # Revoke Key Action
+        ctk.CTkLabel(inner, text="License Management", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=20, pady=(20, 5))
+        ctk.CTkButton(inner, text="Deactivate & Log Out", fg_color=ERROR_RED, hover_color="#991B1B", command=self._logout).pack(anchor="w", padx=20, pady=(0, 20))
 
-        self.dev_avatar_lbl = ctk.CTkLabel(top_row, text="")
-        self.dev_avatar_lbl.pack(side="left", padx=(0, 20))
+        ctk.CTkLabel(inner, text="Contact Developer", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", padx=20, pady=(10, 10))
         
-        # Fetch the round avatar safely
-        def fetch_dev_avatar():
-            try:
-                url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                raw_data = urllib.request.urlopen(req, timeout=5).read()
-                img = Image.open(BytesIO(raw_data)).convert("RGBA")
-                size = (80, 80)
-                img = img.resize(size, Image.Resampling.LANCZOS)
-                
-                mask = Image.new("L", size, 0)
-                draw = ImageDraw.Draw(mask)
-                draw.ellipse((0, 0) + size, fill=255)
-                
-                output = Image.new("RGBA", size, (0, 0, 0, 0))
-                output.paste(img, (0, 0), mask)
-                
-                new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
-                self.after(0, lambda: self.dev_avatar_lbl.configure(image=new_img))
-            except Exception:
-                pass
-        threading.Thread(target=fetch_dev_avatar, daemon=True).start()
-
-        info_frame = ctk.CTkFrame(top_row, fg_color="transparent")
-        info_frame.pack(side="left", fill="both", expand=True)
-
-        ctk.CTkLabel(info_frame, text="Reinhart aka Kiri", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w")
-        ctk.CTkLabel(info_frame, text="Lead Developer", font=ctk.CTkFont(size=14), text_color=TEXT_GRAY).pack(anchor="w")
-        
-        quote = '"We do not do it because it\'s easy. We do it because we thought it would be easy."'
-        ctk.CTkLabel(info_frame, text=quote, font=ctk.CTkFont(size=12, slant="italic"), text_color=NEON_PURPLE).pack(anchor="w", pady=(10, 0))
-
-        # Links Section
-        links_frame = ctk.CTkFrame(card, fg_color="transparent")
-        links_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(links_frame, text="Connect & Portfolio", font=ctk.CTkFont(size=14, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", pady=(0, 10))
-
         links = [
             ("Portfolio", "reinhart.pages.dev", "https://reinhart.pages.dev"),
             ("Telegram", "@kiri0507", "https://t.me/kiri0507"),
             ("WhatsApp", "+1 (315) 370-1897", "https://wa.me/13153701897"),
             ("GitHub", "Reinhart-py", "https://github.com/Reinhart-py"),
-            ("Twitter", "@reinhartDev", "https://x.com/reinhartDev"),
-            ("Instagram", "@reinhart.dev", "https://www.instagram.com/reinhart.dev/"),
         ]
 
         for platform, handle, url in links:
-            row = ctk.CTkFrame(links_frame, fg_color="transparent")
-            row.pack(anchor="w", pady=4, fill="x")
+            row = ctk.CTkFrame(inner, fg_color="transparent")
+            row.pack(anchor="w", padx=20, pady=2, fill="x")
             ctk.CTkLabel(row, text=platform, width=100, anchor="w", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_GRAY).pack(side="left")
             lbl_link = ctk.CTkLabel(row, text=handle, text_color=NEON_PURPLE, cursor="hand2", font=ctk.CTkFont(size=12))
             lbl_link.pack(side="left")
             lbl_link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
 
+    def _logout(self):
+        try: os.remove("license.key")
+        except: pass
+        self._lock_app()
+
     def select_frame(self, name: str):
         for key, frame in self.frames.items():
-            frame.pack_forget()
-        self.frames[name].pack(expand=True, fill="both")
+            frame.grid_forget() if name == "auth" else frame.pack_forget()
+        
+        if name == "auth":
+            self.frames[name].grid(row=0, column=0, sticky="nsew")
+        else:
+            self.frames[name].pack(expand=True, fill="both")
 
         for key, btn in self.nav_btns.items():
             btn.configure(fg_color=CARD_COLOR if key == name else "transparent")
@@ -395,8 +487,7 @@ class KiriApp(ctk.CTk):
         
         def run_task():
             runner = GMapsRunner(target_input=target, output_path=out_path, start_index=start_idx, target_count=cap, ui_logger=self.write_log)
-            try:
-                runner.run()
+            try: runner.run()
             finally:
                 self.is_running = False
                 self.after(0, lambda: self.gmaps_btn.configure(state="normal"))
@@ -432,10 +523,8 @@ class KiriApp(ctk.CTk):
                 start_page = start_page
                 initial_saved = init_saved
                 target_count = cap
-            
             runner = TwoGISRunner(config=Config(), ui_logger=self.write_log)
-            try:
-                runner.run()
+            try: runner.run()
             finally:
                 self.is_running = False
                 self.after(0, lambda: self.twogis_btn.configure(state="normal"))
