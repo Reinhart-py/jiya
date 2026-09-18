@@ -4,7 +4,6 @@ import time
 import urllib.request
 import webbrowser
 from io import BytesIO
-from typing import Optional
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw
@@ -38,7 +37,7 @@ class KiriApp(ctk.CTk):
 
         self.title("Kiri")
         self.geometry("860x540")
-        self.minsize(780, 500)
+        self.minsize(800, 500)
         self.configure(fg_color=BG_COLOR)
 
         self._apply_native_window_icon()
@@ -57,12 +56,9 @@ class KiriApp(ctk.CTk):
         self._build_gmaps_view()
         self._build_2gis_view()
         self._build_history_view()
-        self._build_settings_view()
+        self._build_developer_view()
 
-        self.sidebar_frame.grid_remove()
-        self.main_frame.grid_remove()
         self.select_frame("auth")
-
         threading.Thread(target=self._auto_login, daemon=True).start()
 
     def _apply_native_window_icon(self):
@@ -93,7 +89,7 @@ class KiriApp(ctk.CTk):
             "gmaps": "https://img.icons8.com/ios-filled/50/ffffff/google-maps.png",
             "2gis": "https://img.icons8.com/ios-filled/50/ffffff/globe.png",
             "history": "https://img.icons8.com/ios-filled/50/ffffff/time-machine.png",
-            "settings": "https://img.icons8.com/ios-filled/50/ffffff/settings.png",
+            "developer": "https://img.icons8.com/ios-filled/50/ffffff/user.png",
         }
 
         def fetch_payload():
@@ -116,7 +112,7 @@ class KiriApp(ctk.CTk):
     def _auto_login(self):
         saved = get_saved_key()
         if saved:
-            self.after(0, lambda: self.auth_status.configure(text="Contacting license node...", text_color=TEXT_MUTED))
+            self.after(0, lambda: self.auth_status.configure(text="Checking license status...", text_color=TEXT_MUTED))
             res = verify_key_payload(saved)
             if res["passed"]:
                 self.license_info = {"owner": res["owner"], "expires": res["expires"]}
@@ -133,6 +129,9 @@ class KiriApp(ctk.CTk):
             if not res["passed"]:
                 self.after(0, self._lock_application)
                 break
+            else:
+                self.license_info["expires"] = res["expires"]
+                self.after(0, lambda: self.dash_exp_lbl.configure(text=f"Expires: {res['expires']}"))
 
     def _unlock_application(self):
         self.frames["auth"].grid_forget()
@@ -143,7 +142,9 @@ class KiriApp(ctk.CTk):
         owner_tag = self.license_info["owner"].upper()
         self.user_display_lbl.configure(text=owner_tag)
         self.dash_owner_lbl.configure(text=owner_tag)
-        self.dash_exp_lbl.configure(text=f"Valid until: {self.license_info['expires']}")
+        self.dash_exp_lbl.configure(text=f"Expires: {self.license_info['expires']}")
+        self.dev_user_lbl.configure(text=f"Licensed to: {self.license_info['owner']}")
+        self.dev_exp_lbl.configure(text=f"Expiry: {self.license_info['expires']}")
 
         self._prompt_unfinished_recovery()
 
@@ -156,6 +157,7 @@ class KiriApp(ctk.CTk):
 
     def _build_layout(self):
         self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
 
         self.sidebar_frame = ctk.CTkFrame(self, width=190, corner_radius=0, fg_color=BG_COLOR)
@@ -172,11 +174,11 @@ class KiriApp(ctk.CTk):
     def _build_auth_view(self):
         frame = ctk.CTkFrame(self, fg_color=BG_COLOR)
         self.frames["auth"] = frame
-        frame.grid_rowconfigure((0, 3), weight=1)
-        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure((0, 2), weight=1)
+        frame.grid_columnconfigure((0, 2), weight=1)
 
         outer, inner = self._create_glossy_container(frame, border_glow=NEON_PURPLE, padding=2)
-        outer.grid(row=1, column=0, ipadx=25, ipady=20)
+        outer.grid(row=1, column=1, ipadx=25, ipady=20)
 
         ctk.CTkLabel(inner, text="K I R I", font=ctk.CTkFont(size=28, weight="bold"), text_color=NEON_PURPLE_GLOW).pack(pady=(20, 4))
         ctk.CTkLabel(inner, text="Enterprise System Authentication", font=ctk.CTkFont(size=12), text_color=TEXT_MUTED).pack(pady=(0, 20))
@@ -208,7 +210,7 @@ class KiriApp(ctk.CTk):
         if not key:
             return
         self.auth_btn.configure(state="disabled")
-        self.auth_status.configure(text="Validating token signature...", text_color=TEXT_MUTED)
+        self.auth_status.configure(text="Validating key on server...", text_color=TEXT_MUTED)
 
         def verify_task():
             res = verify_key_payload(key)
@@ -243,7 +245,7 @@ class KiriApp(ctk.CTk):
             ("gmaps", " Google Maps"),
             ("2gis", " 2GIS Global"),
             ("history", " History"),
-            ("settings", " Settings"),
+            ("developer", " Developer"),
         ]
 
         self.nav_btns = {}
@@ -456,35 +458,80 @@ class KiriApp(ctk.CTk):
             self.select_frame("2gis")
         self.write_log(f"Session state loaded: {item.get('target')}")
 
-    def _build_settings_view(self):
+    def _build_developer_view(self):
         frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.frames["settings"] = frame
+        self.frames["developer"] = frame
 
-        title = ctk.CTkLabel(frame, text="Security & Environment", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_WHITE)
+        title = ctk.CTkLabel(frame, text="Developer Dossier", font=ctk.CTkFont(size=24, weight="bold"), text_color=TEXT_WHITE)
         title.pack(anchor="w", pady=(2, 10))
 
         outer, inner = self._create_glossy_container(frame, border_glow=BORDER_HIGHLIGHT, inner_bg=CARD_BG, padding=1)
         outer.pack(fill="both", expand=True, pady=6)
 
-        ctk.CTkLabel(inner, text="Cryptographic Authorization", font=ctk.CTkFont(size=13, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=18, pady=(18, 4))
-        ctk.CTkButton(inner, text="Purge License Key & Lock Terminal", height=32, fg_color=ERROR_RED, hover_color="#B91C1C", corner_radius=8, command=self._purge_session_keys).pack(anchor="w", padx=18, pady=(0, 16))
+        top_profile = ctk.CTkFrame(inner, fg_color="transparent")
+        top_profile.pack(fill="x", padx=18, pady=(16, 12))
 
-        ctk.CTkLabel(inner, text="Official Developer Channels", font=ctk.CTkFont(size=13, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=18, pady=(8, 8))
+        self.dev_avatar_lbl = ctk.CTkLabel(top_profile, text="")
+        self.dev_avatar_lbl.pack(side="left", padx=(0, 18))
+
+        def fetch_round_avatar():
+            try:
+                url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                raw = urllib.request.urlopen(req, timeout=5).read()
+                img = Image.open(BytesIO(raw)).convert("RGBA")
+                size = (72, 72)
+                img = img.resize(size, Image.Resampling.LANCZOS)
+                mask = Image.new("L", size, 0)
+                draw = ImageDraw.Draw(mask)
+                draw.ellipse((0, 0) + size, fill=255)
+                output = Image.new("RGBA", size, (0, 0, 0, 0))
+                output.paste(img, (0, 0), mask)
+                new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
+                self.after(0, lambda: self.dev_avatar_lbl.configure(image=new_img))
+            except Exception:
+                pass
+        threading.Thread(target=fetch_round_avatar, daemon=True).start()
+
+        meta_col = ctk.CTkFrame(top_profile, fg_color="transparent")
+        meta_col.pack(side="left", fill="both", expand=True)
+
+        ctk.CTkLabel(meta_col, text="Reinhart aka Kiri", font=ctk.CTkFont(size=20, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w")
+        ctk.CTkLabel(meta_col, text="Lead Architect & Systems Engineer", font=ctk.CTkFont(size=12), text_color=TEXT_MUTED).pack(anchor="w")
+
+        quote = '"We do not do it because it\'s easy. We do it because we thought it would be easy."'
+        ctk.CTkLabel(meta_col, text=quote, font=ctk.CTkFont(size=11, slant="italic"), text_color=NEON_PURPLE_GLOW).pack(anchor="w", pady=(6, 0))
+
+        lic_info_box = ctk.CTkFrame(inner, fg_color=CARD_INNER, corner_radius=10)
+        lic_info_box.pack(fill="x", padx=18, pady=(0, 12))
+
+        self.dev_user_lbl = ctk.CTkLabel(lic_info_box, text="Licensed to: ...", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_WHITE)
+        self.dev_user_lbl.pack(anchor="w", padx=14, pady=(8, 2))
+        self.dev_exp_lbl = ctk.CTkLabel(lic_info_box, text="Expiry: ...", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED)
+        self.dev_exp_lbl.pack(anchor="w", padx=14, pady=(0, 8))
+
+        ctk.CTkLabel(inner, text="Direct Inquiries & Portfolios", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=18, pady=(4, 6))
 
         channels = [
             ("Portfolio Portal", "reinhart.pages.dev", "https://reinhart.pages.dev"),
             ("Direct Wire (Telegram)", "@kiri0507", "https://t.me/kiri0507"),
             ("Encrypted Trunk (WhatsApp)", "+1 (315) 370-1897", "https://wa.me/13153701897"),
             ("Source Architecture (GitHub)", "Reinhart-py", "https://github.com/Reinhart-py"),
+            ("Dispatch (Twitter/X)", "@reinhartDev", "https://x.com/reinhartDev"),
+            ("Creative (Instagram)", "@reinhart.dev", "https://www.instagram.com/reinhart.dev/"),
         ]
 
         for label, val, link in channels:
             row = ctk.CTkFrame(inner, fg_color="transparent")
-            row.pack(anchor="w", padx=18, pady=3, fill="x")
-            ctk.CTkLabel(row, text=label, width=160, anchor="w", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_MUTED).pack(side="left")
-            link_lbl = ctk.CTkLabel(row, text=val, text_color=NEON_PURPLE_GLOW, cursor="hand2", font=ctk.CTkFont(size=12))
+            row.pack(anchor="w", padx=18, pady=2, fill="x")
+            ctk.CTkLabel(row, text=label, width=170, anchor="w", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_MUTED).pack(side="left")
+            link_lbl = ctk.CTkLabel(row, text=val, text_color=NEON_PURPLE_GLOW, cursor="hand2", font=ctk.CTkFont(size=11))
             link_lbl.pack(side="left")
             link_lbl.bind("<Button-1>", lambda e, u=link: webbrowser.open(u))
+
+        bot_ctrl = ctk.CTkFrame(inner, fg_color="transparent")
+        bot_ctrl.pack(fill="x", padx=18, pady=(12, 12))
+        ctk.CTkButton(bot_ctrl, text="Purge License & De-authenticate", height=30, fg_color=ERROR_RED, hover_color="#B91C1C", font=ctk.CTkFont(size=11, weight="bold"), corner_radius=8, command=self._purge_session_keys).pack(side="left")
 
     def _purge_session_keys(self):
         revoke_saved_key()
@@ -498,8 +545,12 @@ class KiriApp(ctk.CTk):
                 frame.pack_forget()
 
         if name == "auth":
-            self.frames[name].grid(row=0, column=0, sticky="nsew")
+            self.sidebar_frame.grid_remove()
+            self.main_frame.grid_remove()
+            self.frames[name].grid(row=0, column=0, columnspan=2, sticky="nsew")
         else:
+            self.sidebar_frame.grid()
+            self.main_frame.grid()
             self.frames[name].pack(expand=True, fill="both")
 
         for key, btn in self.nav_btns.items():
