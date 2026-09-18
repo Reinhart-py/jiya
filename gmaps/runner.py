@@ -1,25 +1,21 @@
 import csv
 import os
-from typing import List
-
 import pandas as pd
-from rich.console import Console
-from rich.panel import Panel
+from typing import List, Callable
 
 from .scraper import GoogleMapsEngine
 from utils.state_manager import update_latest_progress
 
-console = Console()
 HEADERS = ["keyword", "title", "category", "primary_mobile", "secondary_phone", "website", "address", "rating", "reviews"]
 
-
 class GMapsRunner:
-    def __init__(self, target_input: str, output_path: str, start_index: int = 0, target_count: int = 0):
+    def __init__(self, target_input: str, output_path: str, start_index: int = 0, target_count: int = 0, ui_logger: Callable[[str], None] = print):
         self.target_input = target_input.strip('\'" \t\r\n')
         self.output_path = output_path.strip('\'" \t\r\n')
         self.current_idx = start_index
         self.target_count = target_count
         self.total_saved = 0
+        self.log = ui_logger
 
     def _load_keywords(self) -> List[str]:
         raw_path = os.path.abspath(os.path.expanduser(self.target_input))
@@ -39,7 +35,7 @@ class GMapsRunner:
                 else:
                     return [str(val).strip() for val in df.iloc[:, 0].dropna().tolist()]
             except Exception as e:
-                console.print(f"[bold red]✖ Error parsing file:[/bold red] {e}")
+                self.log(f"✖ Error parsing file: {e}")
                 return [self.target_input]
 
         return [self.target_input]
@@ -56,30 +52,22 @@ class GMapsRunner:
         self._init_csv()
         keywords = self._load_keywords()
 
-        console.print(
-            Panel(
-                f"[bold cyan]TARGET SOURCE:[/bold cyan] [white]{self.target_input}[/white]\n"
-                f"[bold cyan]QUEUED TASKS:[/bold cyan]  [bold yellow]{len(keywords)} items[/bold yellow]\n"
-                f"[bold cyan]EXPORT DEST:[/bold cyan]    [dim]{self.output_path}[/dim]",
-                title="[bold #00f0ff]◈ JIYA MAPS EXTRACTION CLUSTER ◈[/bold #00f0ff]",
-                border_style="cyan",
-                padding=(0, 2),
-            )
-        )
+        self.log(f"Target Source: {self.target_input}")
+        self.log(f"Queued Tasks: {len(keywords)} items")
+        self.log(f"Export Dest: {self.output_path}")
 
         engine = GoogleMapsEngine(headless=False)
 
         try:
             for idx in range(self.current_idx, len(keywords)):
                 kw = keywords[idx]
-
-                console.print(f"\n[bold black on #00f0ff] ❖ [{idx + 1}/{len(keywords)}] TASK: {kw.upper()} ❖ [/bold black on #00f0ff]")
-
-                with console.status("[bold yellow]Connecting & awaiting Google response (Max 20s sentry)...", spinner="bouncingBar"):
-                    is_loaded = engine.search_query(kw)
+                self.log(f"\n--- TASK [{idx+1}/{len(keywords)}]: {kw.upper()} ---")
+                self.log("Connecting & awaiting Google response (Max 20s sentry)...")
+                
+                is_loaded = engine.search_query(kw)
 
                 if not is_loaded:
-                    console.print(f"[bold red]⚠ Sentry Alert:[/bold red] Network stalled or no response after 20s for '{kw}'. Skipping to next task.")
+                    self.log(f"⚠ Sentry Alert: Network stalled or no response after 20s for '{kw}'. Skipping.")
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
 
@@ -88,23 +76,18 @@ class GMapsRunner:
                 max_scrolls = 25
 
                 if engine.is_single_place_view():
-                    console.print("[dim cyan]↳ Single company entity resolved directly[/dim cyan]")
+                    self.log("↳ Single company entity resolved directly")
                     details = engine.parse_active_place_pane()
                     if details and details["title"] != "null":
                         row = [
                             kw, details["title"], details["category"], details["phone_1"],
                             details["phone_2"], details["website"], details["address"],
-                            details["rating"], details["reviews"],
+                            details["rating"], details["reviews"]
                         ]
                         with open(self.output_path, "a", encoding="utf-8", newline="") as f:
                             csv.writer(f).writerow(row)
                         self.total_saved += 1
-                        console.print(
-                            f" [bold #00ff66]✔ #{self.total_saved}[/bold #00ff66] "
-                            f"[white bold]{details['title'][:25]}[/white bold] | "
-                            f"[yellow]{details['phone_1']}[/yellow] | "
-                            f"[dim blue]{details['website'][:24]}[/dim blue]"
-                        )
+                        self.log(f" [#{self.total_saved}] {details['title'][:25]} | {details['phone_1']} | {details['website'][:24]}")
 
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
@@ -131,30 +114,21 @@ class GMapsRunner:
                                 row = [
                                     kw, details["title"], details["category"], details["phone_1"],
                                     details["phone_2"], details["website"], details["address"],
-                                    details["rating"], details["reviews"],
+                                    details["rating"], details["reviews"]
                                 ]
                                 with open(self.output_path, "a", encoding="utf-8", newline="") as f:
                                     csv.writer(f).writerow(row)
 
                                 self.total_saved += 1
                                 fresh_meat += 1
-
-                                mob_badge = (
-                                    "[bold green]📱 MOBILE[/bold green]"
-                                    if ("+9715" in details["phone_1"] or "+91" in details["phone_1"])
-                                    else "[dim]☎ LINE[/dim]"
-                                )
-                                console.print(
-                                    f" [bold #00f0ff]#{self.total_saved:<5}[/bold #00f0ff] "
-                                    f"[white]{details['title'][:24]:<24}[/white] | {mob_badge} "
-                                    f"[yellow]{details['phone_1']:<16}[/yellow] | "
-                                    f"[dim]{details['website'][:22]}[/dim]"
-                                )
+                                
+                                mob_badge = "📱" if ("+9715" in details["phone_1"] or "+91" in details["phone_1"]) else "☎"
+                                self.log(f" [#{self.total_saved:<4}] {details['title'][:24]:<24} | {mob_badge} {details['phone_1']:<16} | {details['website'][:22]}")
                         except Exception:
                             continue
 
                     if engine.is_end_of_list():
-                        console.print("[dim cyan]↳ End of directory reached for this search term.[/dim cyan]")
+                        self.log("↳ End of directory reached for this search term.")
                         break
 
                     has_moved, _ = engine.scroll_results_pane()
@@ -164,16 +138,16 @@ class GMapsRunner:
                         doom_scroll_count = 0
 
                     if doom_scroll_count >= 2:
-                        console.print("[dim cyan]↳ Directory scroll threshold satisfied. Proceeding...[/dim cyan]")
+                        self.log("↳ Directory scroll threshold satisfied. Proceeding...")
                         break
 
                 update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
 
                 if self.target_count > 0 and self.total_saved >= self.target_count:
-                    console.print(f"\n[bold #00ff66]✔ Target lead threshold of {self.target_count} successfully collected![/bold #00ff66]")
+                    self.log(f"\n✔ Target lead threshold of {self.target_count} successfully collected!")
                     break
 
-        except KeyboardInterrupt:
-            console.print("\n[bold yellow]! Pipeline paused by user. Checkpoints preserved.[/bold yellow]")
+        except Exception as e:
+            self.log(f"Pipeline error: {e}")
         finally:
             engine.close()
