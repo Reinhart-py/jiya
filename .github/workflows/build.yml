@@ -18,16 +18,16 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: lead_Windows.exe
-            output_binary: dist/2GIS_Scraper.exe
+            artifact_name: Jiya_Windows.exe
+            output_binary: dist/Jiya.exe
             sep: ";"
           - os: ubuntu-latest
-            artifact_name: lead_Linux
-            output_binary: dist/2GIS_Scraper
+            artifact_name: Jiya_Linux
+            output_binary: dist/Jiya
             sep: ":"
           - os: macos-latest
-            artifact_name: lead_macOS
-            output_binary: dist/2GIS_Scraper
+            artifact_name: Jiya_macOS
+            output_binary: dist/Jiya
             sep: ":"
 
     steps:
@@ -50,27 +50,23 @@ jobs:
         run: |
           python -c "from PIL import Image; img = Image.open('images/logo1.png'); img.save('images/icon.ico', format='ICO', sizes=[(256, 256), (128, 128), (64, 64), (32, 32), (16, 16)])"
 
-      # Windows Build Step
       - name: Compile Windows Executable
         if: runner.os == 'Windows'
         run: |
-          pyinstaller --noconfirm --onefile --console `
-            --name "2GIS_Scraper" `
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "Jiya" `
             --icon "images/icon.ico" `
             --add-data "images${{ matrix.sep }}images" `
-            --collect-all questionary `
-            --collect-all rich `
+            --collect-all customtkinter `
             main.py
 
-      # Linux & macOS Build Step
       - name: Compile Linux/macOS Executable
         if: runner.os != 'Windows'
         run: |
-          pyinstaller --noconfirm --onefile --console \
-            --name "2GIS_Scraper" \
+          pyinstaller --noconfirm --onefile --windowed \
+            --name "Jiya" \
             --add-data "images${{ matrix.sep }}images" \
-            --collect-all questionary \
-            --collect-all rich \
+            --collect-all customtkinter \
             main.py
 
       - name: Rename Output Binary
@@ -94,19 +90,19 @@ jobs:
       - name: Download Windows Binary
         uses: actions/download-artifact@v4
         with:
-          name: 2GIS_Scraper_Windows.exe
+          name: Jiya_Windows.exe
           path: release_assets
 
       - name: Download Linux Binary
         uses: actions/download-artifact@v4
         with:
-          name: 2GIS_Scraper_Linux
+          name: Jiya_Linux
           path: release_assets
 
       - name: Download macOS Binary
         uses: actions/download-artifact@v4
         with:
-          name: 2GIS_Scraper_macOS
+          name: Jiya_macOS
           path: release_assets
 
       - name: Publish Release Assets
