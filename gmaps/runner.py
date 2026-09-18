@@ -35,7 +35,7 @@ class GMapsRunner:
                 else:
                     return [str(val).strip() for val in df.iloc[:, 0].dropna().tolist()]
             except Exception as e:
-                self.log(f"✖ Error parsing file: {e}")
+                self.log(f"! File parsing error: {e}")
                 return [self.target_input]
 
         return [self.target_input]
@@ -52,31 +52,30 @@ class GMapsRunner:
         self._init_csv()
         keywords = self._load_keywords()
 
-        self.log(f"Target Source: {self.target_input}")
-        self.log(f"Queued Tasks: {len(keywords)} items")
-        self.log(f"Export Dest: {self.output_path}")
+        self.log(f"Data Vector: {self.target_input}")
+        self.log(f"Identified Tasks: {len(keywords)}")
+        self.log(f"Export Tunnel: {self.output_path}")
 
         engine = GoogleMapsEngine(headless=False)
 
         try:
             for idx in range(self.current_idx, len(keywords)):
                 kw = keywords[idx]
-                self.log(f"\n--- TASK [{idx+1}/{len(keywords)}]: {kw.upper()} ---")
-                self.log("Connecting & awaiting Google response (Max 20s sentry)...")
+                self.log(f"\n[QUEUE {idx+1}/{len(keywords)}] Initiating sweep for: {kw.upper()}")
                 
                 is_loaded = engine.search_query(kw)
 
                 if not is_loaded:
-                    self.log(f"⚠ Sentry Alert: Network stalled or no response after 20s for '{kw}'. Skipping.")
+                    self.log(f"! Sentry Timeout: Google refused to mount results for '{kw}' within 20s. Bypassing.")
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
 
                 seen_links = set()
                 doom_scroll_count = 0
-                max_scrolls = 25
+                max_scrolls = 30
 
                 if engine.is_single_place_view():
-                    self.log("↳ Single company entity resolved directly")
+                    self.log("↳ Direct hit. Single entity card identified.")
                     details = engine.parse_active_place_pane()
                     if details and details["title"] != "null":
                         row = [
@@ -87,7 +86,7 @@ class GMapsRunner:
                         with open(self.output_path, "a", encoding="utf-8", newline="") as f:
                             csv.writer(f).writerow(row)
                         self.total_saved += 1
-                        self.log(f" [#{self.total_saved}] {details['title'][:25]} | {details['phone_1']} | {details['website'][:24]}")
+                        self.log(f"✔ [#{self.total_saved}] {details['title'][:25]} | {details['phone_1']}")
 
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
@@ -122,13 +121,13 @@ class GMapsRunner:
                                 self.total_saved += 1
                                 fresh_meat += 1
                                 
-                                mob_badge = "📱" if ("+9715" in details["phone_1"] or "+91" in details["phone_1"]) else "☎"
-                                self.log(f" [#{self.total_saved:<4}] {details['title'][:24]:<24} | {mob_badge} {details['phone_1']:<16} | {details['website'][:22]}")
+                                mob_badge = "M" if ("+9715" in details["phone_1"] or "+91" in details["phone_1"]) else "L"
+                                self.log(f"  [#{self.total_saved:<3}] [{mob_badge}] {details['title'][:20]:<20} | {details['phone_1']:<15} | {details['website'][:20]}")
                         except Exception:
                             continue
 
                     if engine.is_end_of_list():
-                        self.log("↳ End of directory reached for this search term.")
+                        self.log("↳ Depleted directory feed.")
                         break
 
                     has_moved, _ = engine.scroll_results_pane()
@@ -138,16 +137,16 @@ class GMapsRunner:
                         doom_scroll_count = 0
 
                     if doom_scroll_count >= 2:
-                        self.log("↳ Directory scroll threshold satisfied. Proceeding...")
+                        self.log("↳ Feed stagnation threshold reached. Moving to next target.")
                         break
 
                 update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
 
                 if self.target_count > 0 and self.total_saved >= self.target_count:
-                    self.log(f"\n✔ Target lead threshold of {self.target_count} successfully collected!")
+                    self.log(f"\n✔ Hard cap of {self.target_count} reached. Securing data.")
                     break
 
         except Exception as e:
-            self.log(f"Pipeline error: {e}")
+            self.log(f"! Critical pipeline failure: {e}")
         finally:
             engine.close()
