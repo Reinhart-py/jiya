@@ -61,7 +61,6 @@ class JiyaApp(ctk.CTk):
         self.frames = {}
 
     def _fetch_avatar_bg(self, size):
-        """Fetches the avatar safely in a background thread so the UI doesn't crash on boot"""
         try:
             url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -79,10 +78,9 @@ class JiyaApp(ctk.CTk):
             new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
             self.after(0, lambda: self.avatar_lbl.configure(image=new_img))
         except Exception:
-            pass # Keep default placeholder
+            pass 
 
     def _build_sidebar(self):
-        # 1. Create immediate placeholder (so UI boots instantly)
         size = (50, 50)
         img = Image.new("RGBA", size, (185, 28, 28, 255))
         mask = Image.new("L", size, 0)
@@ -95,10 +93,10 @@ class JiyaApp(ctk.CTk):
         self.avatar_lbl = ctk.CTkLabel(self.sidebar_frame, image=self.avatar_img, text="")
         self.avatar_lbl.grid(row=0, column=0, pady=(25, 5))
 
-        # 2. Fire network request in the background
         threading.Thread(target=self._fetch_avatar_bg, args=(size,), daemon=True).start()
 
-        title_lbl = ctk.CTkLabel(self.sidebar_frame, text="JIYA SUITE", font=ctk.CTkFont(size=14, weight="bold", tracking=2), text_color=ACCENT_BLOOD)
+        # Fixed: Removed 'tracking=2' and manually spaced the text
+        title_lbl = ctk.CTkLabel(self.sidebar_frame, text="J I Y A   S U I T E", font=ctk.CTkFont(size=14, weight="bold"), text_color=ACCENT_BLOOD)
         title_lbl.grid(row=1, column=0, pady=(0, 25))
 
         nav_buttons = [
