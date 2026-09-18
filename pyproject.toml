@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jiya"
+version = "4.0.0"
+description = "Enterprise CLI scraper for 2GIS and Google Maps leads"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "selenium>=4.15.0",
+    "webdriver-manager>=4.0.1",
+    "questionary>=2.0.1",
+    "rich>=13.7.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.2"
+]
+
+[project.scripts]
+jiya = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["executor*", "runner*", "io_handler*", "utils*", "gmaps*"]
+exclude = ["data*"]

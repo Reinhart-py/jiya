@@ -1,0 +1,45 @@
+import csv
+import logging
+import os
+
+from utils import ColumnData
+
+HEADERS = ["title", "category", "phone_1", "phone_2", "phone_3", "website", "address"]
+
+
+def write_csv_headers(file_path: str) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        with open(file_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(HEADERS)
+            f.flush()
+
+
+def append_single_row(file_path: str, row: list) -> None:
+    with open(file_path, "a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(row)
+        f.flush()
+
+
+def write_to_csv(page_number: int, data: ColumnData, file_path: str) -> None:
+    with open(file_path, "a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        for m in range(len(data.title)):
+            writer.writerow([
+                data.title[m],
+                data.category[m],
+                data.phone_1[m],
+                data.phone_2[m],
+                data.phone_3[m],
+                data.website[m],
+                data.address[m],
+            ])
+        f.flush()
+    logging.info(f"PAGE {page_number} WRITTEN TO CSV")
+
+
+def write_to_file(file_path: str, content: str) -> None:
+    with open(file_path, "w", encoding="utf-8") as writable_file:
+        writable_file.write(content)
