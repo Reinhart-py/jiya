@@ -3,12 +3,10 @@ import re
 import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
-
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-
 
 class GoogleMapsEngine:
     def __init__(self, headless: bool = False):
@@ -18,7 +16,6 @@ class GoogleMapsEngine:
         opts = Options()
         if headless:
             opts.add_argument("--headless=new")
-
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--disable-gpu")
@@ -33,10 +30,10 @@ class GoogleMapsEngine:
         driver.set_page_load_timeout(30)
         return driver
 
-    def human_delay(self, a: float = 0.6, b: float = 1.4) -> None:
+    def human_delay(self, a: float = 0.5, b: float = 1.2) -> None:
         time.sleep(random.uniform(a, b))
 
-    def wait_for_search_results(self, timeout: int = 20) -> bool:
+    def wait_for_search_results(self, timeout: int = 15) -> bool:
         start = time.time()
         while time.time() - start < timeout:
             try:
@@ -45,18 +42,16 @@ class GoogleMapsEngine:
 
                 cards = self.driver.find_elements(
                     By.XPATH,
-                    "//div[@role='feed']//a[contains(@href, '/maps/place/')] | //a[contains(@href, '/maps/place/')]",
+                    "//div[@role='feed']//a[contains(@href, '/maps/place/')] | //a[contains(@href, '/maps/place/')]"
                 )
                 if len(cards) > 0:
                     return True
 
-                if self.is_end_of_list():
+                if self.is_end_of_list() or self.is_partial_match():
                     return True
-
             except Exception:
                 pass
-            time.sleep(0.5)
-
+            time.sleep(0.4)
         return False
 
     def search_query(self, query_or_url: str) -> bool:
@@ -75,7 +70,7 @@ class GoogleMapsEngine:
             for btn_xpath in [
                 "//button[contains(@aria-label, 'Accept')]",
                 "//button[contains(., 'Accept all')]",
-                "//form//button",
+                "//form//button"
             ]:
                 btns = self.driver.find_elements(By.XPATH, btn_xpath)
                 if btns:
@@ -84,7 +79,7 @@ class GoogleMapsEngine:
         except Exception:
             pass
 
-        return self.wait_for_search_results(timeout=20)
+        return self.wait_for_search_results(timeout=15)
 
     def is_end_of_list(self) -> bool:
         try:
@@ -93,36 +88,70 @@ class GoogleMapsEngine:
                 "//span[contains(text(), \"You've reached the end of the list\")] | "
                 "//div[contains(text(), \"You've reached the end of the list\")] | "
                 "//span[contains(text(), 'No more results')] | "
-                "//div[contains(@class, 'HlvSq')]",
+                "//div[contains(@class, 'HlvSq')]"
             )
             return len(end_markers) > 0
+        except Exception:
+            return False
+
+    def is_partial_match(self) -> bool:
+        try:
+            partial_markers = self.driver.find_elements(
+                By.XPATH,
+                "//div[contains(text(), 'Partial match')] | //span[contains(text(), 'Partial match')] | "
+                "//div[contains(text(), 'Did you mean')] | //div[contains(text(), 'No results found')]"
+            )
+            return len(partial_markers) > 0
         except Exception:
             return False
 
     def is_single_place_view(self) -> bool:
         return "/maps/place/" in self.driver.current_url
 
+    def close_place_view(self) -> None:
+        try:
+            back_buttons = self.driver.find_elements(
+                By.XPATH,
+                "//button[contains(@aria-label, 'Back')] | //button[@jsaction*='pane.back'] | "
+                "//button[@aria-label='Close'] | //button[contains(@class, 'hArJGc')]"
+            )
+            if back_buttons and back_buttons[0].is_displayed():
+                self.driver.execute_script("arguments[0].click();", back_buttons[0])
+                time.sleep(0.8)
+                return
+        except Exception:
+            pass
+
+        try:
+            self.driver.back()
+            time.sleep(0.8)
+        except Exception:
+            pass
+
     def scroll_results_pane(self) -> Tuple[bool, int]:
         try:
             feed = self.driver.find_element(
                 By.XPATH,
-                "//div[@role='feed'] | //div[contains(@aria-label, 'Results for')]",
+                "//div[@role='feed'] | //div[contains(@aria-label, 'Results for')]"
             )
             old_top = self.driver.execute_script("return arguments[0].scrollTop;", feed)
             scroll_amt = random.randint(700, 1100)
             self.driver.execute_script("arguments[0].scrollTop += arguments[1];", feed, scroll_amt)
-            self.human_delay(1.0, 1.6)
+            self.human_delay(0.8, 1.4)
             new_top = self.driver.execute_script("return arguments[0].scrollTop;", feed)
             return (new_top > old_top, new_top)
         except Exception:
-            self.driver.execute_script(f"window.scrollBy(0, {random.randint(500, 800)});")
-            self.human_delay(0.8, 1.4)
-            return (True, 0)
+            try:
+                self.driver.execute_script(f"window.scrollBy(0, {random.randint(500, 800)});")
+                self.human_delay(0.6, 1.0)
+                return (True, 0)
+            except Exception:
+                return (False, 0)
 
     def extract_visible_cards(self) -> List:
         return self.driver.find_elements(
             By.XPATH,
-            "//div[@role='feed']//a[contains(@href, '/maps/place/')] | //a[contains(@href, '/maps/place/')]",
+            "//div[@role='feed']//a[contains(@href, '/maps/place/')] | //a[contains(@href, '/maps/place/')]"
         )
 
     def _rank_phones(self, phones: List[str]) -> List[str]:
@@ -155,12 +184,12 @@ class GoogleMapsEngine:
 
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
             self.human_delay(0.1, 0.2)
-            card.click()
+            self.driver.execute_script("arguments[0].click();", card)
 
             start_pane = time.time()
             pane_loaded = False
-            while time.time() - start_pane < 20:
-                if len(self.driver.find_elements(By.XPATH, "//h1[contains(@class, 'DUwDvf')]")) > 0:
+            while time.time() - start_pane < 8:
+                if len(self.driver.find_elements(By.XPATH, "//h1[contains(@class, 'DUwDvf')] | //button[@data-item-id='address']")) > 0:
                     pane_loaded = True
                     break
                 time.sleep(0.3)
@@ -168,8 +197,11 @@ class GoogleMapsEngine:
             if not pane_loaded:
                 return None
 
-            return self.parse_active_place_pane(link, title)
+            data = self.parse_active_place_pane(link, title)
+            self.close_place_view()
+            return data
         except Exception:
+            self.close_place_view()
             return None
 
     def parse_active_place_pane(self, link: str = "", title: str = "") -> Optional[Dict[str, str]]:
@@ -197,7 +229,7 @@ class GoogleMapsEngine:
             raw_phones = []
             phone_nodes = self.driver.find_elements(
                 By.XPATH,
-                "//button[starts-with(@data-item-id, 'phone:')] | //button[contains(@aria-label, 'Phone')] | //a[starts-with(@href, 'tel:')]",
+                "//button[starts-with(@data-item-id, 'phone:')] | //button[contains(@aria-label, 'Phone')] | //a[starts-with(@href, 'tel:')]"
             )
             for node in phone_nodes:
                 text = node.text.replace("Phone:", "").strip()
@@ -217,7 +249,7 @@ class GoogleMapsEngine:
             try:
                 addr_btn = self.driver.find_element(
                     By.XPATH,
-                    "//button[@data-item-id='address'] | //button[contains(@aria-label, 'Address')]",
+                    "//button[@data-item-id='address'] | //button[contains(@aria-label, 'Address')]"
                 )
                 data["address"] = addr_btn.text.replace("Address:", "").strip()
             except Exception:
@@ -226,7 +258,7 @@ class GoogleMapsEngine:
             try:
                 web_btn = self.driver.find_element(
                     By.XPATH,
-                    "//a[@data-item-id='authority'] | //a[contains(@aria-label, 'Website')]",
+                    "//a[@data-item-id='authority'] | //a[contains(@aria-label, 'Website')]"
                 )
                 data["website"] = web_btn.get_attribute("href")
             except Exception:
@@ -235,12 +267,12 @@ class GoogleMapsEngine:
             try:
                 stars_el = self.driver.find_element(
                     By.XPATH,
-                    "//div[contains(@class, 'F7nice')]//span[@aria-hidden='true']",
+                    "//div[contains(@class, 'F7nice')]//span[@aria-hidden='true']"
                 )
                 data["rating"] = stars_el.text.strip()
                 revs_el = self.driver.find_element(
                     By.XPATH,
-                    "//div[contains(@class, 'F7nice')]//span[contains(@aria-label, 'reviews')]",
+                    "//div[contains(@class, 'F7nice')]//span[contains(@aria-label, 'reviews')]"
                 )
                 data["reviews"] = "".join(filter(str.isdigit, revs_el.text))
             except Exception:
@@ -249,7 +281,7 @@ class GoogleMapsEngine:
             try:
                 cat_btn = self.driver.find_element(
                     By.XPATH,
-                    "//button[contains(@jsaction, 'pane.rating.category')]",
+                    "//button[contains(@jsaction, 'pane.rating.category')]"
                 )
                 data["category"] = cat_btn.text.strip()
             except Exception:
