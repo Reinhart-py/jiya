@@ -22,7 +22,7 @@ class GMapsRunner:
         raw_path = os.path.abspath(os.path.expanduser(clean_path))
 
         if os.path.isfile(raw_path):
-            self.log(f"Reading dataset: {raw_path}")
+            self.log(f"Loading batch task dataset: {os.path.basename(raw_path)}")
             ext = os.path.splitext(raw_path)[1].lower()
             try:
                 if ext in [".xlsx", ".xls"]:
@@ -38,7 +38,7 @@ class GMapsRunner:
                 else:
                     return [str(val).strip() for val in df.iloc[:, 0].dropna().tolist()]
             except Exception as e:
-                self.log(f"File parsing error: {e}")
+                self.log(f"Dataset load error: {e}")
                 return [self.target_input]
 
         return [self.target_input]
@@ -55,7 +55,7 @@ class GMapsRunner:
         self._init_csv()
         keywords = self._load_keywords()
 
-        self.log(f"Starting pipeline across {len(keywords)} queries")
+        self.log(f"Mining session initiated. Queue size: {len(keywords)} items")
         engine = GoogleMapsEngine(headless=False)
 
         try:
@@ -64,11 +64,11 @@ class GMapsRunner:
                     break
 
                 kw = keywords[idx]
-                self.log(f"\n[{idx+1}/{len(keywords)}] Processing: {kw}")
+                self.log(f"Target [{idx+1}/{len(keywords)}]: {kw}")
 
                 is_loaded = engine.search_query(kw)
                 if not is_loaded:
-                    self.log(f"No response mounted for: {kw}. Advancing.")
+                    self.log(f"Search timed out for: {kw}. Advancing to next entry.")
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
 
@@ -77,7 +77,7 @@ class GMapsRunner:
                 max_scrolls = 25
 
                 if engine.is_single_place_view():
-                    self.log("Direct place entity detected.")
+                    self.log("Entity resolved directly into single place view.")
                     details = engine.parse_active_place_pane()
                     if details and details["title"] != "null":
                         row = [
@@ -88,7 +88,7 @@ class GMapsRunner:
                         with open(self.output_path, "a", encoding="utf-8", newline="") as f:
                             csv.writer(f).writerow(row)
                         self.total_saved += 1
-                        self.log(f"Saved #{self.total_saved}: {details['title']} | {details['phone_1']}")
+                        self.log(f"Extracted #{self.total_saved}: {details['title']} | {details['phone_1']}")
 
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
@@ -115,7 +115,7 @@ class GMapsRunner:
                             with open(self.output_path, "a", encoding="utf-8", newline="") as f:
                                 csv.writer(f).writerow(row)
                             self.total_saved += 1
-                            self.log(f"Saved #{self.total_saved} (Single Result): {details['title']} | {details['phone_1']}")
+                            self.log(f"Extracted #{self.total_saved} (Single Entry Match): {details['title']} | {details['phone_1']}")
                         break
 
                     for card in cards:
@@ -140,12 +140,12 @@ class GMapsRunner:
 
                                 self.total_saved += 1
                                 new_found += 1
-                                self.log(f"Saved #{self.total_saved}: {details['title'][:22]} | {details['phone_1']}")
+                                self.log(f"Extracted #{self.total_saved}: {details['title'][:24]} | {details['phone_1']}")
                         except Exception:
                             continue
 
                     if engine.is_end_of_list() or engine.is_partial_match():
-                        self.log("Directory feed completed for this target.")
+                        self.log("Reached catalog boundary for query.")
                         break
 
                     has_moved, _ = engine.scroll_results_pane()
@@ -155,16 +155,16 @@ class GMapsRunner:
                         stuck_scrolls = 0
 
                     if stuck_scrolls >= 2:
-                        self.log("Scroll boundary reached.")
+                        self.log("Feed scroll boundary satisfied.")
                         break
 
                 update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
 
                 if self.target_count > 0 and self.total_saved >= self.target_count:
-                    self.log(f"Limit of {self.target_count} records collected.")
+                    self.log(f"Target goal of {self.target_count} leads successfully harvested.")
                     break
 
         except Exception as e:
-            self.log(f"Pipeline error caught: {e}")
+            self.log(f"Scraper cycle error: {e}")
         finally:
             engine.close()
