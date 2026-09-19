@@ -2,7 +2,7 @@
 
 <img src="https://raw.githubusercontent.com/Reinhart-py/kiki/refs/heads/main/images/logo1.png" alt="Reinhart" width="120" style="border-radius: 50%;"/>
 
-# kiri
+# kiki
 ### High-Velocity Lead Generation & Directory Mining Suite
 
 [![Author](https://img.shields.io/badge/Author-Reinhart%20aka%20kiri-8A2BE2?style=for-the-badge&logo=googlechrome&logoColor=white)](https://reinhart.pages.dev/)
