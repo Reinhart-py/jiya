@@ -1,16 +1,14 @@
+import json
 import os
 import threading
 import time
-import urllib.request
 import webbrowser
-from io import BytesIO
-
-import customtkinter as ctk
-from PIL import Image, ImageDraw
+from typing import Any, Dict, List
+import webview
 
 from gmaps.runner import GMapsRunner
 from runner.runner import Runner as TwoGISRunner
-from utils.paths import get_export_dir
+from utils.paths import get_app_dir, get_export_dir
 from utils.security import get_saved_key, revoke_saved_key, save_key, verify_key_payload
 from utils.state_manager import (
     clear_active_checkpoint,
@@ -18,629 +16,696 @@ from utils.state_manager import (
     load_all_history,
 )
 
-ctk.set_appearance_mode("dark")
-
-BG_OBSIDIAN = "#07090E"
-SIDEBAR_BG = "#0B0E17"
-CARD_SLATE = "#101623"
-CARD_INNER = "#151C2C"
-CYAN_ACCENT = "#00F0FF"
-CYAN_HOVER = "#00B8D4"
-CYAN_BORDER = "#005566"
-TEXT_WHITE = "#F8FAFC"
-TEXT_SLATE = "#94A3B8"
-ERROR_ROSE = "#F43F5E"
-
-class KiriApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-
-        self.title("Kiri")
-        self.geometry("900x560")
-        self.minsize(820, 500)
-        self.configure(fg_color=BG_OBSIDIAN)
-
-        self._apply_native_window_icon()
-
-        self.current_thread = None
-        self.is_running = False
-        self.resume_state = {}
-        self.icons = {}
-        self.license_info = {"owner": "", "expires": ""}
-
-        self._load_network_icons()
-        self._build_layout()
-        self._build_auth_view()
-        self._build_sidebar()
-        self._build_dashboard()
-        self._build_gmaps_view()
-        self._build_2gis_view()
-        self._build_history_view()
-        self._build_developer_view()
-
-        self.select_frame("auth")
-        threading.Thread(target=self._auto_login, daemon=True).start()
-
-    def _apply_native_window_icon(self):
-        try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            icon_ico = os.path.join(base_dir, "images", "icon.ico")
-            logo_png = os.path.join(base_dir, "images", "logo1.png")
-
-            if os.name == "nt" and os.path.exists(icon_ico):
-                self.iconbitmap(icon_ico)
-            elif os.path.exists(logo_png):
-                img = Image.open(logo_png)
-                self.wm_iconphoto(True, ctk.CTkImage(light_image=img, dark_image=img, size=(32, 32))._light_image)
-        except Exception:
-            pass
-
-    def _create_cyan_container(self, parent, border_glow=CYAN_BORDER, inner_bg=CARD_INNER, padding=1):
-        outer = ctk.CTkFrame(parent, fg_color=border_glow, corner_radius=14)
-        inner = ctk.CTkFrame(outer, fg_color=inner_bg, corner_radius=13)
-        inner.pack(fill="both", expand=True, padx=padding, pady=padding)
-        return outer, inner
-
-    def _load_network_icons(self):
-        urls = {
-            "telegram": "https://img.icons8.com/color/48/telegram-app.png",
-            "whatsapp": "https://img.icons8.com/color/48/whatsapp--v1.png",
-            "dashboard": "https://img.icons8.com/ios-filled/50/ffffff/dashboard.png",
-            "gmaps": "https://img.icons8.com/ios-filled/50/ffffff/google-maps.png",
-            "2gis": "https://img.icons8.com/ios-filled/50/ffffff/globe.png",
-            "history": "https://img.icons8.com/ios-filled/50/ffffff/time-machine.png",
-            "developer": "https://img.icons8.com/ios-filled/50/ffffff/user.png",
+HTML_UI = """<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Kiri Enterprise</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace'],
+      },
+      colors: {
+        forest: {
+          sidebar: '#111714',
+          sidebarCard: '#17221C',
+          activeNav: '#1C2821',
+          border: '#1E2B23',
+          emerald: '#20C063',
+          emeraldDark: '#147A40',
+          bg: '#F5F8F6',
+          card: '#FFFFFF',
+          cardBorder: '#E3ECE6',
+          cardMuted: '#DCEEE3',
         }
+      }
+    }
+  }
+}
+</script>
+<style>
+body { font-family: 'Plus Jakarta Sans', sans-serif; -webkit-font-smoothing: antialiased; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.25); border-radius: 9999px; }
+.viewport-radial-bg {
+  background-color: #0B2416;
+  background-image: radial-gradient(circle at 50% 50%, #135A33 0%, #0A2E1A 45%, #05160C 100%);
+}
+</style>
+</head>
+<body class="viewport-radial-bg h-full flex items-center justify-center p-2 sm:p-4 selection:bg-emerald-500 selection:text-white select-none">
 
-        def fetch_payload():
-            for name, url in urls.items():
-                try:
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                    raw = urllib.request.urlopen(req, timeout=3).read()
-                    img = Image.open(BytesIO(raw)).convert("RGBA")
-                    self.icons[name] = ctk.CTkImage(light_image=img, dark_image=img, size=(18, 18))
+<div id="view-auth" class="w-full max-w-[460px] bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl text-center flex flex-col items-center border border-neutral-100 transition-all duration-300">
+  <div class="mb-6 flex items-center justify-center">
+    <div class="w-10 h-10 rounded-2xl bg-neutral-900 flex items-center justify-center shadow-sm">
+      <div class="flex items-center space-x-1">
+        <span class="w-1 h-4 bg-white rounded-full"></span>
+        <span class="w-1 h-3 bg-white/70 rounded-full"></span>
+        <span class="w-1 h-2 bg-white/40 rounded-full"></span>
+      </div>
+    </div>
+    <span class="ml-2.5 text-xl font-bold tracking-tight text-neutral-900">Kiri</span>
+  </div>
 
-                    if hasattr(self, "nav_btns") and name in self.nav_btns:
-                        self.after(0, lambda n=name: self.nav_btns[n].configure(image=self.icons[n]))
-                    if hasattr(self, "contact_btns") and name in self.contact_btns:
-                        self.after(0, lambda n=name: self.contact_btns[n].configure(image=self.icons[n]))
-                except Exception:
-                    pass
+  <h1 class="text-2xl font-bold tracking-tight text-neutral-900">Enter License Key</h1>
+  <p class="text-sm text-neutral-500 mt-2 leading-relaxed max-w-xs">
+    Please enter your license key below to activate and continue using Kiri.
+  </p>
 
-        threading.Thread(target=fetch_payload, daemon=True).start()
+  <form class="w-full mt-7 space-y-3" onsubmit="event.preventDefault(); window.submitAuth();">
+    <div>
+      <input id="auth-key-input" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" class="w-full text-center tracking-widest font-mono text-sm px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 transition-all" type="text"/>
+    </div>
+    <div id="auth-error" class="text-xs text-rose-500 font-medium min-h-[18px]"></div>
+    <button id="auth-submit-btn" type="submit" class="w-full py-3.5 px-4 bg-neutral-900 hover:bg-neutral-800 active:bg-black text-white text-sm font-semibold rounded-xl transition-all shadow-sm">
+      Activate
+    </button>
+  </form>
 
-    def _auto_login(self):
-        saved = get_saved_key()
-        if saved:
-            self.after(0, lambda: self.auth_status.configure(text="Validating license signature...", text_color=TEXT_SLATE))
-            res = verify_key_payload(saved)
-            if res["passed"]:
-                self.license_info = {"owner": res["owner"], "expires": res["expires"]}
-                self.after(0, self._unlock_application)
-                threading.Thread(target=self._license_guard_loop, args=(saved,), daemon=True).start()
-            else:
-                self.after(0, lambda: self.auth_status.configure(text=res["msg"], text_color=ERROR_ROSE))
-                self.after(0, lambda: self.auth_btn.configure(state="normal"))
+  <div class="w-full mt-8 pt-6 border-t border-neutral-100">
+    <p class="text-xs text-neutral-400 mb-3">Don't have a key or need a renewal?</p>
+    <div class="grid grid-cols-2 gap-3">
+      <button onclick="window.pywebview.api.open_link('https://wa.me/13153701897')" class="flex items-center justify-center space-x-2 py-2.5 px-3 rounded-xl border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50 text-neutral-700 transition-all text-xs font-medium">
+        <svg class="w-4 h-4 text-emerald-600 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.599 2.679-.702c.972.575 1.761.882 2.781.882h.001c3.182 0 5.767-2.587 5.768-5.766 0-3.182-2.586-5.766-5.769-5.766zm3.374 8.167c-.145.407-.84.773-1.157.822-.317.049-.731.074-2.146-.511-1.705-.705-2.793-2.457-2.879-2.571-.086-.114-.689-.916-.689-1.747 0-.831.436-1.24.592-1.409.155-.169.34-.212.453-.212.113 0 .227 0 .327.006.105.005.244-.04.382.291.144.346.491 1.196.534 1.282.043.086.072.188.014.303-.058.115-.087.188-.173.288-.087.1-.182.224-.26.3-.087.086-.178.18-.077.353.101.173.449.741.964 1.2.663.591 1.222.774 1.395.86.173.086.275.072.376-.044.101-.115.433-.504.549-.677.116-.173.231-.144.39-.086.159.058 1.01.476 1.184.563.173.087.289.13.332.202.044.072.044.419-.101.826z"></path><path d="M12 2C6.477 2 2 6.477 2 12c0 1.891.528 3.662 1.448 5.176L2 22l4.981-1.306A9.957 9.957 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18.067c-1.637 0-3.15-.497-4.409-1.353l-.316-.217-2.957.773.789-2.885-.236-.376A8.026 8.026 0 014 12c0-4.411 3.589-8.067 8-8.067s8 3.656 8 8.067-3.589 8.067-8 8.067z"></path></svg>
+        <span>WhatsApp</span>
+      </button>
+      <button onclick="window.pywebview.api.open_link('https://t.me/kiri0507')" class="flex items-center justify-center space-x-2 py-2.5 px-3 rounded-xl border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50 text-neutral-700 transition-all text-xs font-medium">
+        <svg class="w-4 h-4 text-sky-500 fill-current shrink-0" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"></path></svg>
+        <span>Telegram</span>
+      </button>
+    </div>
+  </div>
+</div>
 
-    def _license_guard_loop(self, key):
-        while True:
-            time.sleep(300)
-            res = verify_key_payload(key)
-            if not res["passed"]:
-                self.after(0, self._lock_application)
-                break
-            else:
-                self.license_info["expires"] = res["expires"]
-                self.after(0, lambda: self.dash_exp_lbl.configure(text=f"Valid: {res['expires']}"))
+<main id="view-app" class="hidden w-full max-w-[1440px] h-[94vh] rounded-[32px] bg-forest-sidebar shadow-2xl border border-[#1B2821] flex overflow-hidden text-neutral-900">
 
-    def _unlock_application(self):
-        self.frames["auth"].grid_forget()
-        self.sidebar_frame.grid()
-        self.main_frame.grid()
-        self.select_frame("dashboard")
+  <aside class="w-[260px] bg-forest-sidebar flex-shrink-0 flex flex-col justify-between p-5 border-r border-[#1B2821] text-slate-300">
+    <div class="space-y-5">
+      <div class="flex items-center gap-2.5 px-1">
+        <div class="flex items-end gap-[3px] h-5">
+          <span class="w-[3.5px] h-3 bg-forest-emerald rounded-full"></span>
+          <span class="w-[3.5px] h-5 bg-forest-emerald rounded-full"></span>
+          <span class="w-[3.5px] h-4 bg-forest-emerald rounded-full"></span>
+        </div>
+        <span class="text-white text-lg font-bold tracking-tight">Kiri</span>
+        <span id="ui-license-pill" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-forest-sidebarCard border border-[#23332A] text-forest-emerald">PRO</span>
+      </div>
 
-        owner_tag = self.license_info["owner"].upper()
-        self.user_display_lbl.configure(text=owner_tag)
-        self.dash_owner_lbl.configure(text=owner_tag)
-        self.dash_exp_lbl.configure(text=f"{self.license_info['expires']}")
-        self.dev_user_lbl.configure(text=f"Licensee: {self.license_info['owner']}")
-        self.dev_exp_lbl.configure(text=f"Term: {self.license_info['expires']}")
+      <div class="bg-forest-sidebarCard rounded-2xl p-2.5 flex items-center justify-between border border-[#23332A]">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-[#1ea857] to-[#146b38] flex items-center justify-center text-white font-bold text-xs shadow-inner">
+            K
+          </div>
+          <div>
+            <div class="text-[10px] text-gray-400 font-medium leading-none">License Node</div>
+            <div id="sidebar-owner-name" class="text-xs text-white font-semibold tracking-wide mt-1 truncate max-w-[120px]">Active Node</div>
+          </div>
+        </div>
+      </div>
 
-        self._prompt_unfinished_recovery()
+      <nav class="space-y-1 text-[13px] font-medium" id="nav-container">
+        <button onclick="switchTab('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-forest-activeNav text-white border border-[#26372D] shadow-sm transition-all">
+          <svg class="w-4 h-4 text-forest-emerald" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Dashboard</span>
+        </button>
+        <button onclick="switchTab('gmaps')" id="nav-gmaps" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-[#16221B] transition-all">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Google Maps</span>
+        </button>
+        <button onclick="switchTab('twogis')" id="nav-twogis" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-[#16221B] transition-all">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>2GIS Global</span>
+        </button>
+        <button onclick="switchTab('history')" id="nav-history" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-[#16221B] transition-all">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Checkpoints</span>
+        </button>
+        <button onclick="switchTab('developer')" id="nav-developer" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-[#16221B] transition-all">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <span>Developer Dossier</span>
+        </button>
+      </nav>
+    </div>
 
-    def _lock_application(self):
-        self.sidebar_frame.grid_remove()
-        self.main_frame.grid_remove()
-        self.select_frame("auth")
-        self.auth_status.configure(text="License session revoked or expired.", text_color=ERROR_ROSE)
-        self.auth_btn.configure(state="normal")
+    <div class="pt-4 border-t border-[#19241E] space-y-3">
+      <div class="flex items-center justify-between px-2 py-1.5 rounded-xl hover:bg-[#16211A] transition-colors">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-full overflow-hidden border border-forest-border flex-shrink-0">
+            <img src="https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727" class="w-full h-full object-cover"/>
+          </div>
+          <div class="leading-tight">
+            <h4 class="text-xs font-semibold text-white">Reinhart</h4>
+            <p id="sidebar-expiry-text" class="text-[10px] text-gray-400 truncate max-w-[110px]">Verified Key</p>
+          </div>
+        </div>
+        <button onclick="window.logoutLicense()" title="Purge Key" class="text-gray-500 hover:text-rose-400 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
 
-    def _build_layout(self):
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=1)
+  <div class="flex-1 bg-forest-bg p-5 sm:p-7 flex flex-col gap-5 overflow-y-auto max-h-[94vh]">
 
-        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=SIDEBAR_BG)
-        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(6, weight=1)
+    <div id="tab-dashboard" class="space-y-5">
+      <header class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight text-neutral-900">Dashboard</h1>
+          <p class="text-xs text-neutral-500 mt-0.5">High-velocity directory mining and intelligence stream</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="system-status-indicator" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Engine Ready
+          </span>
+        </div>
+      </header>
 
-        self.main_frame = ctk.CTkFrame(self, corner_radius=16, fg_color=BG_OBSIDIAN)
-        self.main_frame.grid(row=0, column=1, sticky="nsew", padx=12, pady=12)
-        self.main_frame.grid_rowconfigure(0, weight=1)
-        self.main_frame.grid_columnconfigure(0, weight=1)
+      <div id="recovery-banner" class="hidden bg-neutral-900 text-white rounded-2xl p-4 flex items-center justify-between shadow-lg border border-neutral-800">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-xl bg-forest-emerald flex items-center justify-center text-black font-bold">
+            !
+          </div>
+          <div>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-forest-emerald">Checkpoint Recovery Available</h4>
+            <p id="recovery-banner-text" class="text-xs text-neutral-300 mt-0.5">Session halted unexpectedly.</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="window.resumeActiveCheckpoint()" class="px-4 py-2 rounded-xl bg-forest-emerald hover:bg-emerald-400 text-neutral-900 font-bold text-xs transition-all">
+            Resume Immediately
+          </button>
+          <button onclick="window.dismissActiveCheckpoint()" class="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium transition-all">
+            Dismiss
+          </button>
+        </div>
+      </div>
 
-        self.frames = {}
+      <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-forest-sidebar text-white rounded-[24px] p-5 flex justify-between items-stretch shadow-sm border border-[#1b2b22] relative overflow-hidden">
+          <div class="flex flex-col justify-between z-10">
+            <span class="text-xs font-medium text-gray-400">Total Harvested</span>
+            <div>
+              <div id="stat-total-leads" class="text-3xl font-bold tracking-tight text-white mt-1">0</div>
+              <div class="flex items-center gap-1 text-[11px] font-medium text-forest-emerald mt-1.5">
+                <span>Direct B2B verified numbers</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-end gap-1.5 pl-2 z-10 self-end mb-1">
+            <div class="w-2.5 h-10 bg-forest-emerald rounded-full"></div>
+            <div class="w-2.5 h-6 bg-forest-emerald rounded-full"></div>
+            <div class="w-2.5 h-8 bg-forest-emerald rounded-full"></div>
+          </div>
+        </div>
 
-    def _build_auth_view(self):
-        frame = ctk.CTkFrame(self, fg_color=BG_OBSIDIAN)
-        self.frames["auth"] = frame
-        frame.grid_rowconfigure((0, 2), weight=1)
-        frame.grid_columnconfigure((0, 2), weight=1)
+        <div class="bg-white rounded-[24px] p-5 flex justify-between items-stretch border border-forest-cardBorder shadow-sm">
+          <div class="flex flex-col justify-between">
+            <span class="text-xs font-medium text-gray-500">Completed Sessions</span>
+            <div>
+              <div id="stat-total-sessions" class="text-3xl font-bold tracking-tight text-gray-900 mt-1">0</div>
+              <div class="flex items-center gap-1 text-[11px] font-medium text-emerald-600 mt-1.5">
+                <span>Checkpoints stored</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-end gap-1.5 pl-2 self-end mb-1">
+            <div class="w-2.5 h-5 bg-emerald-200 rounded-full"></div>
+            <div class="w-2.5 h-8 bg-emerald-400 rounded-full"></div>
+            <div class="w-2.5 h-6 bg-forest-emerald rounded-full"></div>
+          </div>
+        </div>
 
-        outer, inner = self._create_cyan_container(frame, border_glow=CYAN_ACCENT, inner_bg=CARD_SLATE, padding=2)
-        outer.grid(row=1, column=1, ipadx=24, ipady=18)
+        <div class="bg-white rounded-[24px] p-5 flex justify-between items-stretch border border-forest-cardBorder shadow-sm">
+          <div class="flex flex-col justify-between">
+            <span class="text-xs font-medium text-gray-500">License Expiration</span>
+            <div>
+              <div id="stat-expiry-text" class="text-sm font-bold tracking-tight text-gray-900 mt-1.5 truncate max-w-[200px]">Validating...</div>
+              <div id="stat-owner-text" class="text-[11px] font-medium text-gray-400 mt-1.5 truncate max-w-[200px]">Registered Node</div>
+            </div>
+          </div>
+          <div class="w-9 h-9 rounded-full bg-forest-cardMuted flex items-center justify-center text-forest-emeraldDark font-bold self-center">
+            ✓
+          </div>
+        </div>
+      </section>
 
-        ctk.CTkLabel(inner, text="K I R I", font=ctk.CTkFont(size=26, weight="bold"), text_color=CYAN_ACCENT).pack(pady=(18, 4))
-        ctk.CTkLabel(inner, text="Lead Mining Core Architecture", font=ctk.CTkFont(size=12), text_color=TEXT_SLATE).pack(pady=(0, 18))
+      <section class="bg-white rounded-[28px] p-5 border border-forest-cardBorder shadow-sm flex flex-col justify-between space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-forest-emerald"></span>
+            <h3 class="text-sm font-bold text-gray-900">Realtime Execution Stream</h3>
+          </div>
+          <span class="text-[11px] text-gray-400 font-mono" id="stream-clock">Ready</span>
+        </div>
+        <div id="console-stream" class="w-full h-72 bg-[#0C120E] text-emerald-400 font-mono text-xs rounded-2xl p-4 overflow-y-auto leading-relaxed border border-[#17251C] shadow-inner space-y-1">
+          <div class="text-gray-500">System standby. Initiate a module run or resume from checkpoint.</div>
+        </div>
+      </section>
+    </div>
 
-        self.auth_input = ctk.CTkEntry(inner, width=300, height=36, justify="center", show="•", fg_color=CARD_INNER, border_color=CYAN_BORDER, border_width=1, corner_radius=8)
-        self.auth_input.pack(pady=4)
+    <div id="tab-gmaps" class="hidden space-y-5">
+      <header>
+        <h1 class="text-2xl font-bold tracking-tight text-neutral-900">Google Maps Lead Miner</h1>
+        <p class="text-xs text-neutral-500 mt-0.5">Automated map card parser with rate-limit evasion and single-match recovery</p>
+      </header>
 
-        self.auth_status = ctk.CTkLabel(inner, text="", font=ctk.CTkFont(size=11), text_color=ERROR_ROSE)
-        self.auth_status.pack(pady=3)
+      <div class="bg-white rounded-[28px] p-6 border border-forest-cardBorder shadow-sm space-y-5">
+        <div>
+          <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Target Query, Maps URL, or Batch File</label>
+          <div class="flex gap-2">
+            <input id="gmaps-input" type="text" class="flex-1 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:ring-1 focus:ring-forest-emerald" value="Software in Business Bay"/>
+            <button onclick="window.selectBatchFile()" class="px-5 py-3 rounded-xl bg-forest-sidebar text-white font-semibold text-xs hover:bg-[#1A2620] transition-colors border border-forest-border">
+              Browse
+            </button>
+          </div>
+        </div>
 
-        self.auth_btn = ctk.CTkButton(inner, text="Authorize System", width=300, height=36, fg_color=CYAN_ACCENT, hover_color=CYAN_HOVER, text_color=BG_OBSIDIAN, font=ctk.CTkFont(weight="bold"), corner_radius=8, command=self._do_login)
-        self.auth_btn.pack(pady=(6, 18))
+        <div>
+          <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Extraction Limit (0 for continuous / unlimited)</label>
+          <input id="gmaps-cap" type="number" class="w-48 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:ring-1 focus:ring-forest-emerald" value="1000"/>
+        </div>
 
-        c_bar = ctk.CTkFrame(inner, fg_color="transparent")
-        c_bar.pack(pady=(0, 8))
-        ctk.CTkLabel(c_bar, text="Direct Registration:", font=ctk.CTkFont(size=11), text_color=TEXT_SLATE).pack(side="left", padx=6)
+        <button onclick="window.runGmaps()" id="gmaps-submit-btn" class="px-6 py-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs tracking-wide transition-all shadow-sm">
+          Start Google Maps Scraper
+        </button>
+      </div>
+    </div>
 
-        self.contact_btns = {}
-        tb = ctk.CTkButton(c_bar, text="", width=30, height=30, fg_color=CARD_INNER, hover_color=CYAN_BORDER, corner_radius=6, command=lambda: webbrowser.open("https://t.me/kiri0507"))
-        tb.pack(side="left", padx=3)
-        wb = ctk.CTkButton(c_bar, text="", width=30, height=30, fg_color=CARD_INNER, hover_color=CYAN_BORDER, corner_radius=6, command=lambda: webbrowser.open("https://wa.me/13153701897"))
-        wb.pack(side="left", padx=3)
+    <div id="tab-twogis" class="hidden space-y-5">
+      <header>
+        <h1 class="text-2xl font-bold tracking-tight text-neutral-900">2GIS Regional Extractor</h1>
+        <p class="text-xs text-neutral-500 mt-0.5">Directory mining across UAE, Russia, Kazakhstan with viewport locking</p>
+      </header>
 
-        self.contact_btns["telegram"] = tb
-        self.contact_btns["whatsapp"] = wb
+      <div class="bg-white rounded-[28px] p-6 border border-forest-cardBorder shadow-sm space-y-5">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Emirate / City Name</label>
+            <input id="twogis-city" type="text" class="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:ring-1 focus:ring-forest-emerald" value="Dubai"/>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Query Taxonomy</label>
+            <input id="twogis-query" type="text" class="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:ring-1 focus:ring-forest-emerald" value="Software"/>
+          </div>
+        </div>
 
-    def _do_login(self):
-        key = self.auth_input.get().strip()
+        <div>
+          <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Extraction Limit</label>
+          <input id="twogis-cap" type="number" class="w-48 bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3 text-sm text-neutral-900 focus:outline-none focus:ring-1 focus:ring-forest-emerald" value="2000"/>
+        </div>
+
+        <button onclick="window.runTwoGis()" id="twogis-submit-btn" class="px-6 py-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs tracking-wide transition-all shadow-sm">
+          Start 2GIS Scraper
+        </button>
+      </div>
+    </div>
+
+    <div id="tab-history" class="hidden space-y-5">
+      <header>
+        <h1 class="text-2xl font-bold tracking-tight text-neutral-900">Checkpoints & Session Vault</h1>
+        <p class="text-xs text-neutral-500 mt-0.5">Instant one-click resume from any previously interrupted or completed run</p>
+      </header>
+
+      <div id="history-container" class="space-y-3">
+        <div class="text-xs text-neutral-400">Loading ledger...</div>
+      </div>
+    </div>
+
+    <div id="tab-developer" class="hidden space-y-5">
+      <header>
+        <h1 class="text-2xl font-bold tracking-tight text-neutral-900">Developer Dossier</h1>
+        <p class="text-xs text-neutral-500 mt-0.5">Author architecture and technical registry</p>
+      </header>
+
+      <div class="bg-white rounded-[28px] p-7 border border-forest-cardBorder shadow-sm space-y-6">
+        <div class="flex items-center gap-4">
+          <div class="w-16 h-16 rounded-full overflow-hidden border-2 border-forest-emerald shadow-md flex-shrink-0">
+            <img src="https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727" class="w-full h-full object-cover"/>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-gray-900">Reinhart aka Kiri</h3>
+            <p class="text-xs text-gray-500 font-medium">Lead Systems Architect & Core Developer</p>
+            <p class="text-xs italic text-forest-emeraldDark font-semibold mt-1">"We do not do it because it's easy. We do it because we thought it would be easy."</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+          <button onclick="window.pywebview.api.open_link('https://reinhart.pages.dev')" class="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 transition-colors text-left">
+            <div>
+              <div class="text-xs font-bold text-gray-900">Portfolio Portal</div>
+              <div class="text-[11px] text-gray-500">reinhart.pages.dev</div>
+            </div>
+            <span class="text-xs font-bold text-forest-emeraldDark">→</span>
+          </button>
+          <button onclick="window.pywebview.api.open_link('https://t.me/kiri0507')" class="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 transition-colors text-left">
+            <div>
+              <div class="text-xs font-bold text-gray-900">Direct Wire (Telegram)</div>
+              <div class="text-[11px] text-gray-500">@kiri0507</div>
+            </div>
+            <span class="text-xs font-bold text-sky-500">→</span>
+          </button>
+          <button onclick="window.pywebview.api.open_link('https://wa.me/13153701897')" class="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 transition-colors text-left">
+            <div>
+              <div class="text-xs font-bold text-gray-900">WhatsApp Priority Line</div>
+              <div class="text-[11px] text-gray-500">+1 (315) 370-1897</div>
+            </div>
+            <span class="text-xs font-bold text-emerald-600">→</span>
+          </button>
+          <button onclick="window.pywebview.api.open_link('https://github.com/Reinhart-py')" class="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 transition-colors text-left">
+            <div>
+              <div class="text-xs font-bold text-gray-900">Source Repository (GitHub)</div>
+              <div class="text-[11px] text-gray-500">Reinhart-py</div>
+            </div>
+            <span class="text-xs font-bold text-neutral-800">→</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+let currentTab = 'dashboard';
+let totalLeadsCount = 0;
+let totalSessionsCount = 0;
+
+function switchTab(name) {
+  currentTab = name;
+  const tabs = ['dashboard', 'gmaps', 'twogis', 'history', 'developer'];
+  tabs.forEach(t => {
+    document.getElementById('tab-' + t).classList.add('hidden');
+    const navBtn = document.getElementById('nav-' + t);
+    navBtn.className = 'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-[#16221B] transition-all';
+  });
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  const activeNav = document.getElementById('nav-' + name);
+  activeNav.className = 'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-forest-activeNav text-white border border-[#26372D] shadow-sm transition-all';
+
+  if (name === 'history') {
+    renderHistory();
+  }
+}
+
+function appendLog(line) {
+  const stream = document.getElementById('console-stream');
+  const row = document.createElement('div');
+  row.className = 'leading-relaxed break-words';
+  row.innerText = line;
+  stream.appendChild(row);
+  stream.scrollTop = stream.scrollHeight;
+
+  if (line.includes('Extracted #') || line.includes('Saved #')) {
+    totalLeadsCount++;
+    document.getElementById('stat-total-leads').innerText = totalLeadsCount.toLocaleString();
+  }
+}
+
+async function submitAuth() {
+  const keyInput = document.getElementById('auth-key-input');
+  const errDiv = document.getElementById('auth-error');
+  const submitBtn = document.getElementById('auth-submit-btn');
+
+  const key = keyInput.value.trim();
+  if (!key) return;
+
+  errDiv.innerText = '';
+  submitBtn.disabled = true;
+  submitBtn.innerText = 'Validating...';
+
+  const res = await window.pywebview.api.verify_license(key);
+  submitBtn.disabled = false;
+  submitBtn.innerText = 'Activate';
+
+  if (res.passed) {
+    unlockUI(res);
+  } else {
+    errDiv.innerText = res.msg || 'License rejected.';
+  }
+}
+
+function unlockUI(data) {
+  document.getElementById('view-auth').classList.add('hidden');
+  document.getElementById('view-app').classList.remove('hidden');
+
+  document.getElementById('sidebar-owner-name').innerText = data.owner || 'Active Node';
+  document.getElementById('sidebar-expiry-text').innerText = data.expires || 'Valid';
+  document.getElementById('stat-owner-text').innerText = 'Licensed to: ' + (data.owner || 'Subscriber');
+  document.getElementById('stat-expiry-text').innerText = data.expires || 'Permanent';
+
+  checkActiveRecovery();
+  loadStats();
+}
+
+async function checkActiveRecovery() {
+  const active = await window.pywebview.api.get_active_checkpoint();
+  if (active && active.target) {
+    const banner = document.getElementById('recovery-banner');
+    document.getElementById('recovery-banner-text').innerText = `[${(active.engine||'SYS').toUpperCase()}] ${active.target} at step ${active.last_step}`;
+    banner.classList.remove('hidden');
+  }
+}
+
+async function loadStats() {
+  const history = await window.pywebview.api.get_history();
+  totalSessionsCount = history.length;
+  document.getElementById('stat-total-sessions').innerText = totalSessionsCount;
+  totalLeadsCount = history.reduce((acc, curr) => acc + (curr.total_saved || 0), 0);
+  document.getElementById('stat-total-leads').innerText = totalLeadsCount.toLocaleString();
+}
+
+async function renderHistory() {
+  const container = document.getElementById('history-container');
+  container.innerHTML = '<div class="text-xs text-neutral-400">Loading history ledger...</div>';
+
+  const history = await window.pywebview.api.get_history();
+  if (!history || history.length === 0) {
+    container.innerHTML = '<div class="text-xs text-neutral-400 p-4 bg-white rounded-2xl border border-forest-cardBorder">No checkpoints recorded yet.</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  history.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'bg-white rounded-2xl p-4 border border-forest-cardBorder shadow-sm flex items-center justify-between';
+    card.innerHTML = `
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-forest-sidebar text-white uppercase">${item.engine || 'SYS'}</span>
+          <h4 class="text-xs font-bold text-gray-900 truncate max-w-xs sm:max-w-md">${item.target || 'Search Task'}</h4>
+        </div>
+        <p class="text-[11px] text-gray-500 mt-1">Saved: <b class="text-gray-900">${item.total_saved || 0}</b> leads | Resumes at Step: <b class="text-gray-900">${item.last_step || 1}</b></p>
+      </div>
+      <button onclick='window.resumeHistorical(${JSON.stringify(item)})' class="px-4 py-2 rounded-xl bg-forest-sidebar hover:bg-[#1B2821] text-white font-bold text-xs transition-all">
+        Resume
+      </button>
+    `;
+    container.appendChild(card);
+  });
+}
+
+async function resumeHistorical(item) {
+  switchTab('dashboard');
+  appendLog(`Resuming [${(item.engine||'').toUpperCase()}] task: ${item.target} from step ${item.last_step}...`);
+  await window.pywebview.api.resume_checkpoint(item);
+}
+
+async function resumeActiveCheckpoint() {
+  document.getElementById('recovery-banner').classList.add('hidden');
+  const active = await window.pywebview.api.get_active_checkpoint();
+  if (active) {
+    await resumeHistorical(active);
+  }
+}
+
+async function dismissActiveCheckpoint() {
+  document.getElementById('recovery-banner').classList.add('hidden');
+  await window.pywebview.api.dismiss_checkpoint();
+  appendLog('Pending checkpoint dismissed.');
+}
+
+async function selectBatchFile() {
+  const path = await window.pywebview.api.browse_file();
+  if (path) {
+    document.getElementById('gmaps-input').value = path;
+  }
+}
+
+async function runGmaps() {
+  const target = document.getElementById('gmaps-input').value.trim();
+  const cap = parseInt(document.getElementById('gmaps-cap').value.trim()) || 0;
+  if (!target) return;
+
+  switchTab('dashboard');
+  appendLog(`Starting Google Maps extraction for: ${target}`);
+  await window.pywebview.api.start_gmaps(target, cap);
+}
+
+async function runTwoGis() {
+  const city = document.getElementById('twogis-city').value.trim();
+  const query = document.getElementById('twogis-query').value.trim();
+  const cap = parseInt(document.getElementById('twogis-cap').value.trim()) || 0;
+  if (!city || !query) return;
+
+  switchTab('dashboard');
+  appendLog(`Starting 2GIS extraction for: ${city} -> ${query}`);
+  await window.pywebview.api.start_twogis(city, query, cap);
+}
+
+async function logoutLicense() {
+  await window.pywebview.api.purge_license();
+  document.getElementById('view-app').classList.add('hidden');
+  document.getElementById('view-auth').classList.remove('hidden');
+  document.getElementById('auth-key-input').value = '';
+}
+
+window.addEventListener('pywebviewready', async () => {
+  const savedRes = await window.pywebview.api.check_saved_license();
+  if (savedRes && savedRes.passed) {
+    unlockUI(savedRes);
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+class JiyaBridge:
+    def __init__(self):
+        self.window = None
+        self.is_running = False
+
+    def set_window(self, win):
+        self.window = win
+
+    def open_link(self, url: str) -> None:
+        webbrowser.open(url)
+
+    def verify_license(self, key: str) -> Dict[str, Any]:
+        res = verify_key_payload(key)
+        if res.get("passed"):
+            save_key(key)
+        return res
+
+    def check_saved_license(self) -> Dict[str, Any]:
+        key = get_saved_key()
         if not key:
-            return
-        self.auth_btn.configure(state="disabled")
-        self.auth_status.configure(text="Authenticating...", text_color=TEXT_SLATE)
+            return {"passed": False}
+        return verify_key_payload(key)
 
-        def verify_task():
-            res = verify_key_payload(key)
-            if res["passed"]:
-                save_key(key)
-                self.license_info = {"owner": res["owner"], "expires": res["expires"]}
-                self.after(0, self._unlock_application)
-                threading.Thread(target=self._license_guard_loop, args=(key,), daemon=True).start()
-            else:
-                self.after(0, lambda: self.auth_status.configure(text=res["msg"], text_color=ERROR_ROSE))
-                self.after(0, lambda: self.auth_btn.configure(state="normal"))
-
-        threading.Thread(target=verify_task, daemon=True).start()
-
-    def _build_sidebar(self):
-        try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            logo_path = os.path.join(base_dir, "images", "logo1.png")
-            logo_img = Image.open(logo_path).convert("RGBA")
-            self.logo_ctk = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(56, 56))
-        except Exception:
-            empty = Image.new("RGBA", (56, 56), (0, 0, 0, 0))
-            self.logo_ctk = ctk.CTkImage(light_image=empty, dark_image=empty, size=(56, 56))
-
-        ctk.CTkLabel(self.sidebar_frame, image=self.logo_ctk, text="").grid(row=0, column=0, pady=(16, 2))
-
-        self.user_display_lbl = ctk.CTkLabel(self.sidebar_frame, text="...", font=ctk.CTkFont(size=12, weight="bold"), text_color=CYAN_ACCENT)
-        self.user_display_lbl.grid(row=1, column=0, pady=(0, 16))
-
-        nav_buttons = [
-            ("dashboard", " Dashboard"),
-            ("gmaps", " Google Maps"),
-            ("2gis", " 2GIS Global"),
-            ("history", " Checkpoints"),
-            ("developer", " Developer"),
-        ]
-
-        self.nav_btns = {}
-        for i, (key, text) in enumerate(nav_buttons):
-            btn = ctk.CTkButton(
-                self.sidebar_frame,
-                text=text,
-                image=self.icons.get(key, None),
-                fg_color="transparent",
-                text_color=TEXT_WHITE,
-                hover_color=CARD_SLATE,
-                anchor="w",
-                corner_radius=8,
-                font=ctk.CTkFont(size=12),
-                command=lambda k=key: self.select_frame(k),
-            )
-            btn.grid(row=i + 2, column=0, padx=10, pady=3, sticky="ew")
-            self.nav_btns[key] = btn
-
-    def _build_dashboard(self):
-        frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.frames["dashboard"] = frame
-
-        title = ctk.CTkLabel(frame, text="Operations Console", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE)
-        title.grid(row=0, column=0, sticky="w", pady=(2, 10))
-
-        stats_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        stats_frame.grid(row=1, column=0, sticky="ew")
-        stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
-
-        history = load_all_history()
-        total_leads = sum(h.get("total_saved", 0) for h in history)
-
-        self._render_stat_metric(stats_frame, "Sessions", str(len(history)), 0)
-        self._render_stat_metric(stats_frame, "Leads Saved", f"{total_leads:,}", 1)
-
-        lic_outer, lic_inner = self._create_cyan_container(stats_frame, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-        lic_outer.grid(row=0, column=2, sticky="ew", padx=5)
-        lic_inner.pack_propagate(False)
-        ctk.CTkLabel(lic_inner, text="KEY REGISTRATION", font=ctk.CTkFont(size=9, weight="bold"), text_color=TEXT_SLATE).pack(anchor="w", padx=12, pady=(8, 0))
-        self.dash_owner_lbl = ctk.CTkLabel(lic_inner, text="...", font=ctk.CTkFont(size=13, weight="bold"), text_color=CYAN_ACCENT)
-        self.dash_owner_lbl.pack(anchor="w", padx=12)
-        self.dash_exp_lbl = ctk.CTkLabel(lic_inner, text="Validating...", font=ctk.CTkFont(size=10), text_color=TEXT_SLATE)
-        self.dash_exp_lbl.pack(anchor="w", padx=12)
-
-        self.resume_banner_outer, self.resume_banner_inner = self._create_cyan_container(frame, border_glow=CYAN_ACCENT, inner_bg=CARD_SLATE, padding=1)
-        self.resume_banner_lbl = ctk.CTkLabel(self.resume_banner_inner, text="Active Checkpoint: Interrupted session available.", font=ctk.CTkFont(size=11), text_color=TEXT_WHITE)
-        self.resume_banner_lbl.pack(side="left", padx=12, pady=6)
-        self.resume_banner_btn = ctk.CTkButton(self.resume_banner_inner, text="Resume Immediately", width=130, height=26, fg_color=CYAN_ACCENT, hover_color=CYAN_HOVER, text_color=BG_OBSIDIAN, font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6, command=self._resume_active_checkpoint)
-        self.resume_banner_btn.pack(side="right", padx=8, pady=5)
-        self.resume_banner_dismiss = ctk.CTkButton(self.resume_banner_inner, text="Dismiss", width=50, height=26, fg_color=CARD_INNER, hover_color=CYAN_BORDER, font=ctk.CTkFont(size=11), corner_radius=6, command=self._dismiss_active_checkpoint)
-        self.resume_banner_dismiss.pack(side="right", padx=(0, 4), pady=5)
-
-        log_outer, log_inner = self._create_cyan_container(frame, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-        log_outer.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
-        frame.grid_rowconfigure(3, weight=1)
-
-        header_row = ctk.CTkFrame(log_inner, fg_color="transparent")
-        header_row.pack(fill="x", padx=10, pady=(8, 0))
-        ctk.CTkLabel(header_row, text="Realtime Execution Terminal", font=ctk.CTkFont(size=10, weight="bold"), text_color=TEXT_SLATE).pack(side="left")
-
-        self.sys_log = ctk.CTkTextbox(log_inner, fg_color="transparent", text_color=TEXT_WHITE, font=ctk.CTkFont(family="Consolas", size=11))
-        self.sys_log.pack(expand=True, fill="both", padx=6, pady=6)
-        self.sys_log.configure(state="disabled")
-
-    def _render_stat_metric(self, parent, title, value, col):
-        outer, inner = self._create_cyan_container(parent, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-        outer.grid(row=0, column=col, sticky="ew", padx=5)
-        inner.pack_propagate(False)
-
-        lbl_val = ctk.CTkLabel(inner, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=CYAN_ACCENT)
-        lbl_val.pack(anchor="w", padx=12, pady=(6, 0))
-        lbl_title = ctk.CTkLabel(inner, text=title.upper(), font=ctk.CTkFont(size=9, weight="bold"), text_color=TEXT_SLATE)
-        lbl_title.pack(anchor="w", padx=12)
-
-    def _prompt_unfinished_recovery(self):
-        active = get_active_checkpoint()
-        if active and active.get("target"):
-            tgt = str(active.get("target"))[:25]
-            eng = str(active.get("engine", "SYS")).upper()
-            step = active.get("last_step", 1)
-            self.resume_banner_lbl.configure(text=f"Interrupted Session: [{eng}] {tgt}... (Step {step})")
-            self.resume_banner_outer.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        else:
-            self.resume_banner_outer.grid_remove()
-
-    def _dismiss_active_checkpoint(self):
-        clear_active_checkpoint()
-        self.resume_banner_outer.grid_remove()
-        self.write_log("Active checkpoint purged.")
-
-    def _resume_active_checkpoint(self):
-        active = get_active_checkpoint()
-        if active:
-            self.resume_banner_outer.grid_remove()
-            self._execute_restored_session(active)
-
-    def _execute_restored_session(self, item):
-        self.resume_state = item
-        engine = item.get("engine")
-        self.select_frame("dashboard")
-
-        if engine == "gmaps":
-            self.write_log(f"Resuming Google Maps run: {item.get('target')} from Step {item.get('last_step', 0)}")
-            self.gmaps_input.delete(0, "end")
-            self.gmaps_input.insert(0, item.get("target", ""))
-            self.gmaps_cap.delete(0, "end")
-            self.gmaps_cap.insert(0, str(item.get("target_count", 0)))
-            self._execute_gmaps_pipeline()
-        elif engine == "2gis":
-            self.write_log(f"Resuming 2GIS run: {item.get('city_name')} - {item.get('query_string')} from Page {item.get('last_step', 1)}")
-            self.twogis_city.delete(0, "end")
-            self.twogis_city.insert(0, item.get("city_name", ""))
-            self.twogis_query.delete(0, "end")
-            self.twogis_query.insert(0, item.get("query_string", ""))
-            self.twogis_cap.delete(0, "end")
-            self.twogis_cap.insert(0, str(item.get("target_count", 0)))
-            self._execute_twogis_pipeline()
-
-    def _build_gmaps_view(self):
-        frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.frames["gmaps"] = frame
-
-        title = ctk.CTkLabel(frame, text="Google Maps Intelligence", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE)
-        title.pack(anchor="w", pady=(2, 12))
-
-        outer, inner = self._create_cyan_container(frame, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-        outer.pack(fill="x")
-
-        ctk.CTkLabel(inner, text="Target Search, Maps Web URL, or File Dataset", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=16, pady=(14, 4))
-
-        input_box = ctk.CTkFrame(inner, fg_color="transparent")
-        input_box.pack(fill="x", padx=16)
-        self.gmaps_input = ctk.CTkEntry(input_box, width=360, height=34, fg_color=CARD_INNER, border_color=CYAN_BORDER, border_width=1, corner_radius=6)
-        self.gmaps_input.pack(side="left", fill="x", expand=True)
-        self.gmaps_input.insert(0, "Software in Business Bay")
-
-        ctk.CTkButton(input_box, text="Browse", width=70, height=34, fg_color=CARD_INNER, border_color=CYAN_ACCENT, border_width=1, hover_color=CYAN_HOVER, text_color=TEXT_WHITE, corner_radius=6, command=self._select_batch_file).pack(side="left", padx=(8, 0))
-
-        ctk.CTkLabel(inner, text="Target Extraction Cap (0 = Continuous / Unlimited)", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=16, pady=(12, 4))
-        self.gmaps_cap = ctk.CTkEntry(inner, width=150, height=34, fg_color=CARD_INNER, border_color=CYAN_BORDER, border_width=1, corner_radius=6)
-        self.gmaps_cap.pack(anchor="w", padx=16, pady=(0, 16))
-        self.gmaps_cap.insert(0, "1000")
-
-        self.gmaps_btn = ctk.CTkButton(frame, text="Execute Target Run", height=38, fg_color=CYAN_ACCENT, hover_color=CYAN_HOVER, text_color=BG_OBSIDIAN, font=ctk.CTkFont(weight="bold"), corner_radius=8, command=self._execute_gmaps_pipeline)
-        self.gmaps_btn.pack(anchor="w", pady=16)
-
-    def _select_batch_file(self):
-        selected = ctk.filedialog.askopenfilename(filetypes=[("Data Files", "*.csv *.xlsx *.txt")])
-        if selected:
-            self.gmaps_input.delete(0, "end")
-            self.gmaps_input.insert(0, selected)
-
-    def _build_2gis_view(self):
-        frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.frames["2gis"] = frame
-
-        title = ctk.CTkLabel(frame, text="2GIS Global Scraper", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE)
-        title.pack(anchor="w", pady=(2, 12))
-
-        outer, inner = self._create_cyan_container(frame, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-        outer.pack(fill="x")
-
-        ctk.CTkLabel(inner, text="Target Emirate or Municipality", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=16, pady=(14, 4))
-        self.twogis_city = ctk.CTkEntry(inner, width=360, height=34, fg_color=CARD_INNER, border_color=CYAN_BORDER, border_width=1, corner_radius=6)
-        self.twogis_city.pack(anchor="w", padx=16)
-        self.twogis_city.insert(0, "Dubai")
-
-        ctk.CTkLabel(inner, text="Category Query Keyword", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=16, pady=(12, 4))
-        self.twogis_query = ctk.CTkEntry(inner, width=360, height=34, fg_color=CARD_INNER, border_color=CYAN_BORDER, border_width=1, corner_radius=6)
-        self.twogis_query.pack(anchor="w", padx=16)
-        self.twogis_query.insert(0, "Software")
-
-        ctk.CTkLabel(inner, text="Target Extraction Cap", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=16, pady=(12, 4))
-        self.twogis_cap = ctk.CTkEntry(inner, width=150, height=34, fg_color=CARD_INNER, border_color=CYAN_BORDER, border_width=1, corner_radius=6)
-        self.twogis_cap.pack(anchor="w", padx=16, pady=(0, 16))
-        self.twogis_cap.insert(0, "2000")
-
-        self.twogis_btn = ctk.CTkButton(frame, text="Execute Regional Run", height=38, fg_color=CYAN_ACCENT, hover_color=CYAN_HOVER, text_color=BG_OBSIDIAN, font=ctk.CTkFont(weight="bold"), corner_radius=8, command=self._execute_twogis_pipeline)
-        self.twogis_btn.pack(anchor="w", pady=16)
-
-    def _build_history_view(self):
-        frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.frames["history"] = frame
-
-        title = ctk.CTkLabel(frame, text="Extraction Checkpoints", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE)
-        title.pack(anchor="w", pady=(2, 12))
-
-        self.scroll_hist = ctk.CTkScrollableFrame(frame, fg_color="transparent", corner_radius=0)
-        self.scroll_hist.pack(expand=True, fill="both")
-
-    def refresh_history(self):
-        for widget in self.scroll_hist.winfo_children():
-            widget.destroy()
-
-        history = load_all_history()
-        if not history:
-            ctk.CTkLabel(self.scroll_hist, text="No historic checkpoints recorded.", text_color=TEXT_SLATE).pack(pady=18)
-            return
-
-        for item in history:
-            outer, inner = self._create_cyan_container(self.scroll_hist, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-            outer.pack(fill="x", pady=3)
-
-            eng = str(item.get("engine", "SYS")).upper()
-            tgt = str(item.get("target", ""))[:38]
-            svd = item.get("total_saved", 0)
-            step = item.get("last_step", 1)
-
-            info = ctk.CTkLabel(inner, text=f"[{eng}] {tgt} | Yield: {svd} | Step: {step}", font=ctk.CTkFont(size=11), text_color=TEXT_WHITE)
-            info.pack(side="left", padx=12, pady=10)
-
-            btn = ctk.CTkButton(inner, text="Resume Run", width=90, height=26, fg_color=CARD_INNER, border_width=1, border_color=CYAN_ACCENT, hover_color=CYAN_HOVER, font=ctk.CTkFont(size=11), corner_radius=6, command=lambda i=item: self._execute_restored_session(i))
-            btn.pack(side="right", padx=10)
-
-    def _build_developer_view(self):
-        frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.frames["developer"] = frame
-
-        title = ctk.CTkLabel(frame, text="Developer Dossier", font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT_WHITE)
-        title.pack(anchor="w", pady=(2, 8))
-
-        outer, inner = self._create_cyan_container(frame, border_glow=CYAN_BORDER, inner_bg=CARD_SLATE, padding=1)
-        outer.pack(fill="both", expand=True, pady=4)
-
-        top_profile = ctk.CTkFrame(inner, fg_color="transparent")
-        top_profile.pack(fill="x", padx=16, pady=(14, 10))
-
-        self.dev_avatar_lbl = ctk.CTkLabel(top_profile, text="")
-        self.dev_avatar_lbl.pack(side="left", padx=(0, 16))
-
-        def fetch_round_avatar():
-            try:
-                url = "https://ik.imagekit.io/Reinhart/reinhart.png?updatedAt=1747593545727"
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                raw = urllib.request.urlopen(req, timeout=5).read()
-                img = Image.open(BytesIO(raw)).convert("RGBA")
-                size = (68, 68)
-                img = img.resize(size, Image.Resampling.LANCZOS)
-                mask = Image.new("L", size, 0)
-                draw = ImageDraw.Draw(mask)
-                draw.ellipse((0, 0) + size, fill=255)
-                output = Image.new("RGBA", size, (0, 0, 0, 0))
-                output.paste(img, (0, 0), mask)
-                new_img = ctk.CTkImage(light_image=output, dark_image=output, size=size)
-                self.after(0, lambda: self.dev_avatar_lbl.configure(image=new_img))
-            except Exception:
-                pass
-        threading.Thread(target=fetch_round_avatar, daemon=True).start()
-
-        meta_col = ctk.CTkFrame(top_profile, fg_color="transparent")
-        meta_col.pack(side="left", fill="both", expand=True)
-
-        ctk.CTkLabel(meta_col, text="Reinhart aka Kiri", font=ctk.CTkFont(size=18, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w")
-        ctk.CTkLabel(meta_col, text="Lead Systems Architect", font=ctk.CTkFont(size=11), text_color=TEXT_SLATE).pack(anchor="w")
-
-        quote = '"We do not do it because it\'s easy. We do it because we thought it would be easy."'
-        ctk.CTkLabel(meta_col, text=quote, font=ctk.CTkFont(size=10, slant="italic"), text_color=CYAN_ACCENT).pack(anchor="w", pady=(4, 0))
-
-        lic_box = ctk.CTkFrame(inner, fg_color=CARD_INNER, corner_radius=8)
-        lic_box.pack(fill="x", padx=16, pady=(0, 10))
-
-        self.dev_user_lbl = ctk.CTkLabel(lic_box, text="Licensee: ...", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE)
-        self.dev_user_lbl.pack(anchor="w", padx=12, pady=(6, 1))
-        self.dev_exp_lbl = ctk.CTkLabel(lic_box, text="Expiry: ...", font=ctk.CTkFont(size=10), text_color=TEXT_SLATE)
-        self.dev_exp_lbl.pack(anchor="w", padx=12, pady=(0, 6))
-
-        ctk.CTkLabel(inner, text="Official Communication Trunks", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_WHITE).pack(anchor="w", padx=16, pady=(2, 4))
-
-        channels = [
-            ("Portfolio Portal", "reinhart.pages.dev", "https://reinhart.pages.dev"),
-            ("Direct Channel (Telegram)", "@kiri0507", "https://t.me/kiri0507"),
-            ("Priority Channel (WhatsApp)", "+1 (315) 370-1897", "https://wa.me/13153701897"),
-            ("Repository (GitHub)", "Reinhart-py", "https://github.com/Reinhart-py"),
-            ("Updates (Twitter/X)", "@reinhartDev", "https://x.com/reinhartDev"),
-            ("Instagram", "@reinhart.dev", "https://www.instagram.com/reinhart.dev/"),
-        ]
-
-        for label, val, link in channels:
-            row = ctk.CTkFrame(inner, fg_color="transparent")
-            row.pack(anchor="w", padx=16, pady=1, fill="x")
-            ctk.CTkLabel(row, text=label, width=170, anchor="w", font=ctk.CTkFont(size=11, weight="bold"), text_color=TEXT_SLATE).pack(side="left")
-            link_lbl = ctk.CTkLabel(row, text=val, text_color=CYAN_ACCENT, cursor="hand2", font=ctk.CTkFont(size=11))
-            link_lbl.pack(side="left")
-            link_lbl.bind("<Button-1>", lambda e, u=link: webbrowser.open(u))
-
-        bot_ctrl = ctk.CTkFrame(inner, fg_color="transparent")
-        bot_ctrl.pack(fill="x", padx=16, pady=(10, 10))
-        ctk.CTkButton(bot_ctrl, text="Purge License Token", height=28, fg_color=ERROR_ROSE, hover_color="#BE123C", font=ctk.CTkFont(size=11, weight="bold"), corner_radius=6, command=self._purge_session_keys).pack(side="left")
-
-    def _purge_session_keys(self):
+    def purge_license(self) -> None:
         revoke_saved_key()
-        self._lock_application()
 
-    def select_frame(self, name: str):
-        for key, frame in self.frames.items():
-            if name == "auth":
-                frame.grid_forget()
-            else:
-                frame.pack_forget()
+    def get_history(self) -> List[Dict[str, Any]]:
+        return load_all_history()
 
-        if name == "auth":
-            self.sidebar_frame.grid_remove()
-            self.main_frame.grid_remove()
-            self.frames[name].grid(row=0, column=0, columnspan=2, sticky="nsew")
-        else:
-            self.sidebar_frame.grid()
-            self.main_frame.grid()
-            self.frames[name].pack(expand=True, fill="both")
+    def get_active_checkpoint(self) -> Any:
+        return get_active_checkpoint()
 
-        for key, btn in self.nav_btns.items():
-            btn.configure(fg_color=CARD_SLATE if key == name else "transparent")
+    def dismiss_checkpoint(self) -> None:
+        clear_active_checkpoint()
 
-        if name == "history":
-            self.refresh_history()
-        elif name == "dashboard":
-            self._prompt_unfinished_recovery()
+    def browse_file(self) -> str:
+        if not self.window:
+            return ""
+        result = self.window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            file_types=("Supported Datasets (*.csv;*.xlsx;*.txt)", "All Files (*.*)")
+        )
+        return result[0] if result else ""
 
-    def write_log(self, message: str):
-        self.after(0, self._thread_safe_log, message)
+    def log_stream(self, text: str) -> None:
+        if self.window:
+            safe_text = json.dumps(str(text))
+            self.window.evaluate_js(f"appendLog({safe_text});")
 
-    def _thread_safe_log(self, message: str):
-        self.sys_log.configure(state="normal")
-        self.sys_log.insert("end", message + "\n")
-        self.sys_log.see("end")
-        self.sys_log.configure(state="disabled")
-
-    def _execute_gmaps_pipeline(self):
+    def start_gmaps(self, target: str, cap: int, start_idx: int = 0) -> None:
         if self.is_running:
             return
         self.is_running = True
-        self.gmaps_btn.configure(state="disabled")
-        self.select_frame("dashboard")
-
-        target = self.gmaps_input.get().strip()
-        cap_val = self.gmaps_cap.get().strip()
-        cap = int(cap_val) if cap_val.isdigit() else 0
 
         out_path = str(get_export_dir() / "gmaps_extracted_leads.csv")
-        out_path = self.resume_state.get("output_path", out_path)
-        start_idx = self.resume_state.get("last_step", 0)
 
-        self.write_log(f"Launching Google Maps worker for: {target}")
-        self.resume_state = {}
-
-        def async_worker():
-            runner = GMapsRunner(target_input=target, output_path=out_path, start_index=start_idx, target_count=cap, ui_logger=self.write_log)
+        def worker():
+            runner = GMapsRunner(
+                target_input=target,
+                output_path=out_path,
+                start_index=start_idx,
+                target_count=cap,
+                ui_logger=self.log_stream
+            )
             try:
                 runner.run()
             finally:
                 self.is_running = False
-                self.after(0, lambda: self.gmaps_btn.configure(state="normal"))
-                self.write_log("Execution finished.")
-                self.after(0, self._prompt_unfinished_recovery)
+                self.log_stream("Google Maps extraction completed.")
 
-        threading.Thread(target=async_worker, daemon=True).start()
+        threading.Thread(target=worker, daemon=True).start()
 
-    def _execute_twogis_pipeline(self):
+    def start_twogis(self, city: str, query: str, cap: int, start_page: int = 1, initial_saved: int = 0) -> None:
         if self.is_running:
             return
         self.is_running = True
-        self.twogis_btn.configure(state="disabled")
-        self.select_frame("dashboard")
-
-        city = self.twogis_city.get().strip().lower()
-        query = self.twogis_query.get().strip()
-        cap_val = self.twogis_cap.get().strip()
-        cap = int(cap_val) if cap_val.isdigit() else 0
 
         out_path = str(get_export_dir() / "2gis_extracted_leads.csv")
-        out_path = self.resume_state.get("output_path", out_path)
-        start_page = self.resume_state.get("last_step", 1)
-        init_saved = self.resume_state.get("total_saved", 0)
 
-        self.write_log(f"Launching 2GIS worker for: {city} -> {query}")
-        self.resume_state = {}
-
-        def async_worker():
-            class RuntimeConfig:
+        def worker():
+            class Config:
                 engine = "2gis"
                 city_name = city
                 query_string = query
                 country = "ae"
                 output_path = out_path
                 start_page = start_page
-                initial_saved = init_saved
+                initial_saved = initial_saved
                 target_count = cap
 
-            runner = TwoGISRunner(config=RuntimeConfig(), ui_logger=self.write_log)
+            runner = TwoGISRunner(config=Config(), ui_logger=self.log_stream)
             try:
                 runner.run()
             finally:
                 self.is_running = False
-                self.after(0, lambda: self.twogis_btn.configure(state="normal"))
-                self.write_log("Execution finished.")
-                self.after(0, self._prompt_unfinished_recovery)
+                self.log_stream("2GIS regional extraction completed.")
 
-        threading.Thread(target=async_worker, daemon=True).start()
+        threading.Thread(target=worker, daemon=True).start()
+
+    def resume_checkpoint(self, item: Dict[str, Any]) -> None:
+        engine = item.get("engine")
+        if engine == "gmaps":
+            target = item.get("target", "")
+            cap = int(item.get("target_count", 0))
+            start_idx = int(item.get("last_step", 0))
+            self.start_gmaps(target, cap, start_idx)
+        elif engine == "2gis":
+            city = item.get("city_name", "dubai")
+            query = item.get("query_string", "")
+            cap = int(item.get("target_count", 0))
+            start_page = int(item.get("last_step", 1))
+            initial_saved = int(item.get("total_saved", 0))
+            self.start_twogis(city, query, cap, start_page, initial_saved)
+
+class KiriApp:
+    def __init__(self):
+        self.bridge = JiyaBridge()
+        self.window = webview.create_window(
+            title="Kiri",
+            html=HTML_UI,
+            js_api=self.bridge,
+            width=1240,
+            height=820,
+            min_size=(960, 640),
+            background_color="#0B2416"
+        )
+        self.bridge.set_window(self.window)
+
+    def mainloop(self):
+        webview.start(debug=False)
