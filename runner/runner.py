@@ -21,8 +21,8 @@ class Runner:
 
     def advance_to_page(self, driver, target_page: int) -> int:
         current = 1
-        self.log(f"Skipping pages to reach Page {target_page}...")
-        
+        self.log(f"Skipping pages to reach checkpoint: Page {target_page}...")
+
         while current < target_page:
             try:
                 target_btn = driver.find_elements(
@@ -31,7 +31,7 @@ class Runner:
                 )
                 if target_btn:
                     driver.execute_script("arguments[0].click();", target_btn[0])
-                    time.sleep(2.0)
+                    time.sleep(1.8)
                     return target_page
             except Exception:
                 pass
@@ -42,9 +42,9 @@ class Runner:
                 time.sleep(0.1)
                 driver.execute_script("arguments[0].click();", next_btn)
                 current += 1
-                time.sleep(0.7)
+                time.sleep(0.6)
             except Exception as e:
-                self.log(f"Skipping stopped at Page {current}: {e}")
+                self.log(f"Page advance stopped at Page {current}: {e}")
                 break
         return current
 
@@ -56,7 +56,7 @@ class Runner:
 
         while True:
             if self.target_count > 0 and total_saved >= self.target_count:
-                self.log(f"Target of {self.target_count} leads saved.")
+                self.log(f"Harvest limit of {self.target_count} records achieved.")
                 clear_state()
                 break
 
@@ -71,7 +71,7 @@ class Runner:
                     country_tld=self.country_code,
                 )
                 navigate(driver=driver, url=initial_url)
-                time.sleep(4.0)
+                time.sleep(3.5)
 
                 if current_page == 1:
                     try:
@@ -79,7 +79,7 @@ class Runner:
                         raw_c = "".join(filter(str.isdigit, page_count_el.text))
                         if raw_c:
                             max_pages = (int(raw_c) // 12) + 2
-                        self.log(f"Found approximately {max_pages} pages of results.")
+                        self.log(f"Catalog depth estimated at {max_pages} pages.")
                     except Exception:
                         pass
 
@@ -91,7 +91,7 @@ class Runner:
                         break
 
                     target_str = f"/{self.target_count}" if self.target_count > 0 else ""
-                    self.log(f"\n--- Page {current_page} --- | Saved: {total_saved}{target_str}")
+                    self.log(f"Page {current_page} | Harvested: {total_saved}{target_str}")
 
                     scroll_container = None
                     for xpath in [
@@ -123,7 +123,7 @@ class Runner:
                         cards = driver.find_elements(By.XPATH, "//a[contains(@href, '/firm/')]")
 
                     if not cards:
-                        self.log(f"No more places found on Page {current_page}. Reached the end.")
+                        self.log(f"End of directory catalog reached on Page {current_page}.")
                         return
 
                     for card in cards:
@@ -209,7 +209,7 @@ class Runner:
 
                             append_single_row(self.output_dir, [title, category, p1, p2, p3, website, address])
                             total_saved += 1
-                            self.log(f"Saved [#{total_saved}]: {title[:20]} | {p1} | {website[:20]}")
+                            self.log(f"Extracted #{total_saved}: {title[:20]} | {p1} | {website[:22]}")
 
                             try:
                                 driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
@@ -235,16 +235,16 @@ class Runner:
                     time.sleep(0.2)
                     driver.execute_script("arguments[0].click();", next_btn)
                     current_page += 1
-                    time.sleep(2.0)
+                    time.sleep(1.8)
 
             except Exception as crash_err:
-                self.log(f"Browser crashed or ran out of memory: {crash_err}")
-                self.log("Restarting browser and resuming from the same page in 3s...")
+                self.log(f"Browser recovery intercepted: {crash_err}")
+                self.log("Restoring browser driver and resuming state in 3s...")
                 time.sleep(3)
             finally:
                 quit_session(driver)
 
             if current_page > max_pages:
-                self.log("Finished scraping all pages.")
+                self.log("Regional catalog mining cycle completed.")
                 clear_state()
                 break
