@@ -9,7 +9,7 @@ def get_history_file() -> str:
 def get_checkpoint_file() -> str:
     return str(get_app_dir() / "checkpoint.json")
 
-MAX_HISTORY = 15
+MAX_HISTORY = 20
 
 def load_all_history() -> List[Dict[str, Any]]:
     path = get_history_file()
