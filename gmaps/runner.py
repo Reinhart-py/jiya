@@ -18,12 +18,11 @@ class GMapsRunner:
         self.log = ui_logger
 
     def _load_keywords(self) -> List[str]:
-        # Handle file paths securely, stripping extra quotes from Windows copy-path
         clean_path = self.target_input.replace('"', '').replace("'", "").strip()
         raw_path = os.path.abspath(os.path.expanduser(clean_path))
-        
+
         if os.path.isfile(raw_path):
-            self.log(f"Reading file: {raw_path}")
+            self.log(f"Reading dataset: {raw_path}")
             ext = os.path.splitext(raw_path)[1].lower()
             try:
                 if ext in [".xlsx", ".xls"]:
@@ -39,7 +38,7 @@ class GMapsRunner:
                 else:
                     return [str(val).strip() for val in df.iloc[:, 0].dropna().tolist()]
             except Exception as e:
-                self.log(f"Error reading file: {e}")
+                self.log(f"File parsing error: {e}")
                 return [self.target_input]
 
         return [self.target_input]
@@ -56,27 +55,29 @@ class GMapsRunner:
         self._init_csv()
         keywords = self._load_keywords()
 
-        self.log(f"Total queries to search: {len(keywords)}")
+        self.log(f"Starting pipeline across {len(keywords)} queries")
         engine = GoogleMapsEngine(headless=False)
 
         try:
             for idx in range(self.current_idx, len(keywords)):
-                kw = keywords[idx]
-                self.log(f"\nSearching for: {kw}")
-                
-                is_loaded = engine.search_query(kw)
+                if self.target_count > 0 and self.total_saved >= self.target_count:
+                    break
 
+                kw = keywords[idx]
+                self.log(f"\n[{idx+1}/{len(keywords)}] Processing: {kw}")
+
+                is_loaded = engine.search_query(kw)
                 if not is_loaded:
-                    self.log(f"Timed out. No results loaded for '{kw}'. Skipping.")
+                    self.log(f"No response mounted for: {kw}. Advancing.")
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
 
                 seen_links = set()
                 stuck_scrolls = 0
-                max_scrolls = 30
+                max_scrolls = 25
 
                 if engine.is_single_place_view():
-                    self.log("Single place found directly.")
+                    self.log("Direct place entity detected.")
                     details = engine.parse_active_place_pane()
                     if details and details["title"] != "null":
                         row = [
@@ -87,18 +88,35 @@ class GMapsRunner:
                         with open(self.output_path, "a", encoding="utf-8", newline="") as f:
                             csv.writer(f).writerow(row)
                         self.total_saved += 1
-                        self.log(f"Saved [#{self.total_saved}]: {details['title'][:25]} | {details['phone_1']}")
+                        self.log(f"Saved #{self.total_saved}: {details['title']} | {details['phone_1']}")
 
                     update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
                     continue
 
                 for _ in range(max_scrolls):
-                    # Fixed: if target count is 0, we ignore the cap check
                     if self.target_count > 0 and self.total_saved >= self.target_count:
                         break
 
+                    if engine.is_single_place_view():
+                        engine.close_place_view()
+
                     cards = engine.extract_visible_cards()
                     new_found = 0
+
+                    if len(cards) == 1 and (engine.is_end_of_list() or engine.is_partial_match()):
+                        card = cards[0]
+                        details = engine.parse_card_details(card)
+                        if details and details.get("link"):
+                            row = [
+                                kw, details["title"], details["category"], details["phone_1"],
+                                details["phone_2"], details["website"], details["address"],
+                                details["rating"], details["reviews"]
+                            ]
+                            with open(self.output_path, "a", encoding="utf-8", newline="") as f:
+                                csv.writer(f).writerow(row)
+                            self.total_saved += 1
+                            self.log(f"Saved #{self.total_saved} (Single Result): {details['title']} | {details['phone_1']}")
+                        break
 
                     for card in cards:
                         if self.target_count > 0 and self.total_saved >= self.target_count:
@@ -122,13 +140,12 @@ class GMapsRunner:
 
                                 self.total_saved += 1
                                 new_found += 1
-                                
-                                self.log(f"Saved [#{self.total_saved}]: {details['title'][:20]} | {details['phone_1']} | {details['website'][:20]}")
+                                self.log(f"Saved #{self.total_saved}: {details['title'][:22]} | {details['phone_1']}")
                         except Exception:
                             continue
 
-                    if engine.is_end_of_list():
-                        self.log("Reached the end of the list for this search.")
+                    if engine.is_end_of_list() or engine.is_partial_match():
+                        self.log("Directory feed completed for this target.")
                         break
 
                     has_moved, _ = engine.scroll_results_pane()
@@ -138,16 +155,16 @@ class GMapsRunner:
                         stuck_scrolls = 0
 
                     if stuck_scrolls >= 2:
-                        self.log("Scrolling stuck, moving to next search.")
+                        self.log("Scroll boundary reached.")
                         break
 
                 update_latest_progress("gmaps", self.target_input, idx + 1, self.total_saved)
 
                 if self.target_count > 0 and self.total_saved >= self.target_count:
-                    self.log(f"Target of {self.target_count} reached. Stopping.")
+                    self.log(f"Limit of {self.target_count} records collected.")
                     break
 
         except Exception as e:
-            self.log(f"Error occurred: {e}")
+            self.log(f"Pipeline error caught: {e}")
         finally:
             engine.close()
