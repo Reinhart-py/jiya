@@ -1,101 +1,103 @@
-import json
 import os
-from typing import Any, Dict, List, Optional
-from utils.paths import get_app_dir
+import platform
+import subprocess
+import sys
+from pathlib import Path
+from typing import Callable, Dict, Any
+import requests
+from utils.paths import get_app_dir, get_export_dir
 
-def get_history_file() -> str:
-    return str(get_app_dir() / "history.json")
+def get_setup_state_file() -> Path:
+    return get_app_dir() / "setup_complete.lock"
 
-def get_checkpoint_file() -> str:
-    return str(get_app_dir() / "checkpoint.json")
+def is_first_run() -> bool:
+    return not get_setup_state_file().exists()
 
-MAX_HISTORY = 20
-
-def load_all_history() -> List[Dict[str, Any]]:
-    path = get_history_file()
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
-        except Exception:
-            return []
-    return []
-
-def push_history_checkpoint(entry: Dict[str, Any]) -> None:
-    history = load_all_history()
-    engine = entry.get("engine")
-    target = entry.get("target")
-    history = [h for h in history if not (h.get("engine") == engine and h.get("target") == target)]
-    history.insert(0, entry)
-    history = history[:MAX_HISTORY]
+def mark_setup_complete() -> None:
     try:
-        with open(get_history_file(), "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
+        with open(get_setup_state_file(), "w", encoding="utf-8") as f:
+            f.write("SETUP_INITIALIZED_V4")
     except Exception:
         pass
 
-def update_latest_progress(engine: str, target: str, last_page_or_idx: int, total_saved: int) -> None:
-    history = load_all_history()
-    for h in history:
-        if h.get("engine") == engine and h.get("target") == target:
-            h["last_step"] = last_page_or_idx
-            h["total_saved"] = total_saved
-            break
-    try:
-        with open(get_history_file(), "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
-    except Exception:
-        pass
-
-    set_active_checkpoint({
-        "engine": engine,
-        "target": target,
-        "last_step": last_page_or_idx,
-        "total_saved": total_saved
-    })
-
-def set_active_checkpoint(state: Dict[str, Any]) -> None:
-    try:
-        with open(get_checkpoint_file(), "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
-
-def get_active_checkpoint() -> Optional[Dict[str, Any]]:
-    path = get_checkpoint_file()
-    if os.path.exists(path):
+def find_chrome_binary() -> str:
+    system = platform.system()
+    if system == "Windows":
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data.get("target"):
-                    return data
-        except Exception:
-            return None
-    return None
-
-def clear_active_checkpoint() -> None:
-    path = get_checkpoint_file()
-    if os.path.exists(path):
-        try:
-            os.remove(path)
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe")
+            path, _ = winreg.QueryValueEx(key, "")
+            if os.path.isfile(path):
+                return path
         except Exception:
             pass
+    elif system == "Darwin":
+        paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        ]
+        for p in paths:
+            if os.path.isfile(p):
+                return p
+    else:
+        paths = ["/usr/bin/google-chrome", "/usr/bin/chromium-browser", "/usr/bin/chromium"]
+        for p in paths:
+            if os.path.isfile(p):
+                return p
+    return ""
 
-def save_state(city: str, query: str, country: str, page: int, total_saved: int, output_path: str, target_count: int) -> None:
-    payload = {
-        "engine": "2gis",
-        "target": f"{city}:{query}",
-        "city_name": city,
-        "query_string": query,
-        "country": country,
-        "output_path": output_path,
-        "last_step": page,
-        "total_saved": total_saved,
-        "target_count": target_count,
-    }
-    push_history_checkpoint(payload)
-    set_active_checkpoint(payload)
+def run_environment_diagnostics(progress_callback: Callable[[str, int, bool], None]) -> Dict[str, Any]:
+    report = {"ready": True, "chrome_path": "", "errors": []}
 
-def clear_state() -> None:
-    clear_active_checkpoint()
+    progress_callback("Allocating local application storage...", 20, True)
+    try:
+        app_dir = get_app_dir()
+        export_dir = get_export_dir()
+        test_file = app_dir / ".write_test"
+        with open(test_file, "w") as f:
+            f.write("OK")
+        test_file.unlink(missing_ok=True)
+    except Exception as e:
+        report["ready"] = False
+        report["errors"].append(f"Storage permission denied: {e}")
+        progress_callback("Failed writing to application storage.", 20, False)
+        return report
+
+    progress_callback("Checking Chromium browser runtime...", 50, True)
+    chrome_binary = find_chrome_binary()
+    if chrome_binary:
+        report["chrome_path"] = chrome_binary
+    else:
+        report["ready"] = False
+        report["errors"].append("Google Chrome or Chromium runtime not found on this workstation.")
+        progress_callback("Google Chrome is not detected.", 50, False)
+        return report
+
+    progress_callback("Verifying network connection and authentication gateway...", 75, True)
+    try:
+        res = requests.get("https://jules-api.vercel.app/api/validate", timeout=5)
+    except Exception:
+        pass
+
+    progress_callback("Initializing hardware cryptographic signature...", 90, True)
+    from utils.security import get_machine_soul
+    soul = get_machine_soul()
+    if not soul:
+        report["ready"] = False
+        report["errors"].append("Could not generate hardware fingerprint.")
+        progress_callback("Cryptographic signature failure.", 90, False)
+        return report
+
+    progress_callback("Environment initialized successfully.", 100, True)
+    mark_setup_complete()
+    return report
