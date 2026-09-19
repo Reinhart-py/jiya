@@ -27,10 +27,10 @@ class GoogleMapsEngine:
 
         service = Service()
         driver = webdriver.Chrome(service=service, options=opts)
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(35)
         return driver
 
-    def human_delay(self, a: float = 0.5, b: float = 1.2) -> None:
+    def human_delay(self, a: float = 0.4, b: float = 0.9) -> None:
         time.sleep(random.uniform(a, b))
 
     def wait_for_search_results(self, timeout: int = 15) -> bool:
@@ -51,7 +51,7 @@ class GoogleMapsEngine:
                     return True
             except Exception:
                 pass
-            time.sleep(0.4)
+            time.sleep(0.3)
         return False
 
     def search_query(self, query_or_url: str) -> bool:
@@ -99,7 +99,8 @@ class GoogleMapsEngine:
             partial_markers = self.driver.find_elements(
                 By.XPATH,
                 "//div[contains(text(), 'Partial match')] | //span[contains(text(), 'Partial match')] | "
-                "//div[contains(text(), 'Did you mean')] | //div[contains(text(), 'No results found')]"
+                "//div[contains(text(), 'Did you mean')] | //div[contains(text(), 'No results found')] | "
+                "//div[contains(text(), \"Don't see what you're looking for?\")]"
             )
             return len(partial_markers) > 0
         except Exception:
@@ -117,14 +118,14 @@ class GoogleMapsEngine:
             )
             if back_buttons and back_buttons[0].is_displayed():
                 self.driver.execute_script("arguments[0].click();", back_buttons[0])
-                time.sleep(0.8)
+                time.sleep(0.6)
                 return
         except Exception:
             pass
 
         try:
             self.driver.back()
-            time.sleep(0.8)
+            time.sleep(0.6)
         except Exception:
             pass
 
@@ -137,13 +138,13 @@ class GoogleMapsEngine:
             old_top = self.driver.execute_script("return arguments[0].scrollTop;", feed)
             scroll_amt = random.randint(700, 1100)
             self.driver.execute_script("arguments[0].scrollTop += arguments[1];", feed, scroll_amt)
-            self.human_delay(0.8, 1.4)
+            self.human_delay(0.7, 1.2)
             new_top = self.driver.execute_script("return arguments[0].scrollTop;", feed)
             return (new_top > old_top, new_top)
         except Exception:
             try:
                 self.driver.execute_script(f"window.scrollBy(0, {random.randint(500, 800)});")
-                self.human_delay(0.6, 1.0)
+                self.human_delay(0.5, 0.9)
                 return (True, 0)
             except Exception:
                 return (False, 0)
@@ -188,11 +189,11 @@ class GoogleMapsEngine:
 
             start_pane = time.time()
             pane_loaded = False
-            while time.time() - start_pane < 8:
+            while time.time() - start_pane < 7:
                 if len(self.driver.find_elements(By.XPATH, "//h1[contains(@class, 'DUwDvf')] | //button[@data-item-id='address']")) > 0:
                     pane_loaded = True
                     break
-                time.sleep(0.3)
+                time.sleep(0.2)
 
             if not pane_loaded:
                 return None
