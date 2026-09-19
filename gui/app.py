@@ -10,6 +10,7 @@ from gmaps.runner import GMapsRunner
 from runner.runner import Runner as TwoGISRunner
 from utils.paths import get_app_dir, get_export_dir
 from utils.security import get_saved_key, revoke_saved_key, save_key, verify_key_payload
+from utils.setup_checker import is_first_run, run_environment_diagnostics
 from utils.state_manager import (
     clear_active_checkpoint,
     get_active_checkpoint,
@@ -63,7 +64,38 @@ body { font-family: 'Plus Jakarta Sans', sans-serif; -webkit-font-smoothing: ant
 </head>
 <body class="viewport-radial-bg h-full flex items-center justify-center p-2 sm:p-4 selection:bg-emerald-500 selection:text-white select-none">
 
-<div id="view-auth" class="w-full max-w-[460px] bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl text-center flex flex-col items-center border border-neutral-100 transition-all duration-300">
+<div id="view-setup" class="hidden w-full max-w-[500px] bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl text-center flex flex-col items-center border border-neutral-100 transition-all duration-300">
+  <div class="mb-6 flex items-center justify-center">
+    <div class="w-12 h-12 rounded-2xl bg-forest-sidebar flex items-center justify-center shadow-sm">
+      <div class="flex items-end gap-[3px] h-6">
+        <span class="w-[4px] h-3.5 bg-forest-emerald rounded-full"></span>
+        <span class="w-[4px] h-6 bg-forest-emerald rounded-full"></span>
+        <span class="w-[4px] h-4.5 bg-forest-emerald rounded-full"></span>
+      </div>
+    </div>
+  </div>
+
+  <h1 class="text-2xl font-bold tracking-tight text-neutral-900">Workstation Preparation</h1>
+  <p class="text-sm text-neutral-500 mt-2 leading-relaxed max-w-xs">
+    Kiri is configuring browser drivers, hardware cryptography, and local cache directories.
+  </p>
+
+  <div class="w-full mt-7 space-y-4">
+    <div class="w-full bg-neutral-100 rounded-full h-2.5 overflow-hidden">
+      <div id="setup-progress-bar" class="bg-forest-emerald h-2.5 rounded-full transition-all duration-300" style="width: 5%"></div>
+    </div>
+    <div class="flex justify-between items-center text-xs font-mono text-neutral-500">
+      <span id="setup-step-desc">Starting engine validation...</span>
+      <span id="setup-progress-pct" class="font-bold text-neutral-800">5%</span>
+    </div>
+    <div id="setup-error-box" class="hidden text-xs text-rose-500 bg-rose-50 border border-rose-200 rounded-xl p-3 text-left"></div>
+    <button id="setup-retry-btn" onclick="window.startSetup()" class="hidden w-full py-3 px-4 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold rounded-xl transition-all shadow-sm">
+      Retry Installation
+    </button>
+  </div>
+</div>
+
+<div id="view-auth" class="hidden w-full max-w-[460px] bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl text-center flex flex-col items-center border border-neutral-100 transition-all duration-300">
   <div class="mb-6 flex items-center justify-center">
     <div class="w-10 h-10 rounded-2xl bg-neutral-900 flex items-center justify-center shadow-sm">
       <div class="flex items-center space-x-1">
@@ -430,6 +462,30 @@ function appendLog(line) {
   }
 }
 
+async function startSetup() {
+  document.getElementById('setup-error-box').classList.add('hidden');
+  document.getElementById('setup-retry-btn').classList.add('hidden');
+  await window.pywebview.api.run_setup();
+}
+
+function updateSetupProgress(desc, pct, success) {
+  document.getElementById('setup-step-desc').innerText = desc;
+  document.getElementById('setup-progress-pct').innerText = pct + '%';
+  document.getElementById('setup-progress-bar').style.width = pct + '%';
+
+  if (!success) {
+    const box = document.getElementById('setup-error-box');
+    box.innerText = desc;
+    box.classList.remove('hidden');
+    document.getElementById('setup-retry-btn').classList.remove('hidden');
+  }
+}
+
+function completeSetup() {
+  document.getElementById('view-setup').classList.add('hidden');
+  checkLicenseState();
+}
+
 async function submitAuth() {
   const keyInput = document.getElementById('auth-key-input');
   const errDiv = document.getElementById('auth-error');
@@ -454,6 +510,7 @@ async function submitAuth() {
 }
 
 function unlockUI(data) {
+  document.getElementById('view-setup').classList.add('hidden');
   document.getElementById('view-auth').classList.add('hidden');
   document.getElementById('view-app').classList.remove('hidden');
 
@@ -568,10 +625,22 @@ async function logoutLicense() {
   document.getElementById('auth-key-input').value = '';
 }
 
-window.addEventListener('pywebviewready', async () => {
+async function checkLicenseState() {
   const savedRes = await window.pywebview.api.check_saved_license();
   if (savedRes && savedRes.passed) {
     unlockUI(savedRes);
+  } else {
+    document.getElementById('view-auth').classList.remove('hidden');
+  }
+}
+
+window.addEventListener('pywebviewready', async () => {
+  const needsSetup = await window.pywebview.api.check_first_run();
+  if (needsSetup) {
+    document.getElementById('view-setup').classList.remove('hidden');
+    startSetup();
+  } else {
+    checkLicenseState();
   }
 });
 </script>
@@ -587,125 +656,14 @@ class JiyaBridge:
     def set_window(self, win):
         self.window = win
 
-    def open_link(self, url: str) -> None:
-        webbrowser.open(url)
+    def check_first_run(self) -> bool:
+        return is_first_run()
 
-    def verify_license(self, key: str) -> Dict[str, Any]:
-        res = verify_key_payload(key)
-        if res.get("passed"):
-            save_key(key)
-        return res
-
-    def check_saved_license(self) -> Dict[str, Any]:
-        key = get_saved_key()
-        if not key:
-            return {"passed": False}
-        return verify_key_payload(key)
-
-    def purge_license(self) -> None:
-        revoke_saved_key()
-
-    def get_history(self) -> List[Dict[str, Any]]:
-        return load_all_history()
-
-    def get_active_checkpoint(self) -> Any:
-        return get_active_checkpoint()
-
-    def dismiss_checkpoint(self) -> None:
-        clear_active_checkpoint()
-
-    def browse_file(self) -> str:
-        if not self.window:
-            return ""
-        result = self.window.create_file_dialog(
-            webview.OPEN_DIALOG,
-            file_types=("Supported Datasets (*.csv;*.xlsx;*.txt)", "All Files (*.*)")
-        )
-        return result[0] if result else ""
-
-    def log_stream(self, text: str) -> None:
-        if self.window:
-            safe_text = json.dumps(str(text))
-            self.window.evaluate_js(f"appendLog({safe_text});")
-
-    def start_gmaps(self, target: str, cap: int, start_idx: int = 0) -> None:
-        if self.is_running:
-            return
-        self.is_running = True
-
-        out_path = str(get_export_dir() / "gmaps_extracted_leads.csv")
-
+    def run_setup(self) -> None:
         def worker():
-            runner = GMapsRunner(
-                target_input=target,
-                output_path=out_path,
-                start_index=start_idx,
-                target_count=cap,
-                ui_logger=self.log_stream
-            )
-            try:
-                runner.run()
-            finally:
-                self.is_running = False
-                self.log_stream("Google Maps extraction completed.")
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def start_twogis(self, city: str, query: str, cap: int, start_page: int = 1, initial_saved: int = 0) -> None:
-        if self.is_running:
-            return
-        self.is_running = True
-
-        out_path = str(get_export_dir() / "2gis_extracted_leads.csv")
-
-        def worker():
-            class Config:
-                engine = "2gis"
-                city_name = city
-                query_string = query
-                country = "ae"
-                output_path = out_path
-                start_page = start_page
-                initial_saved = initial_saved
-                target_count = cap
-
-            runner = TwoGISRunner(config=Config(), ui_logger=self.log_stream)
-            try:
-                runner.run()
-            finally:
-                self.is_running = False
-                self.log_stream("2GIS regional extraction completed.")
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def resume_checkpoint(self, item: Dict[str, Any]) -> None:
-        engine = item.get("engine")
-        if engine == "gmaps":
-            target = item.get("target", "")
-            cap = int(item.get("target_count", 0))
-            start_idx = int(item.get("last_step", 0))
-            self.start_gmaps(target, cap, start_idx)
-        elif engine == "2gis":
-            city = item.get("city_name", "dubai")
-            query = item.get("query_string", "")
-            cap = int(item.get("target_count", 0))
-            start_page = int(item.get("last_step", 1))
-            initial_saved = int(item.get("total_saved", 0))
-            self.start_twogis(city, query, cap, start_page, initial_saved)
-
-class KiriApp:
-    def __init__(self):
-        self.bridge = JiyaBridge()
-        self.window = webview.create_window(
-            title="Kiri",
-            html=HTML_UI,
-            js_api=self.bridge,
-            width=1240,
-            height=820,
-            min_size=(960, 640),
-            background_color="#0B2416"
-        )
-        self.bridge.set_window(self.window)
-
-    def mainloop(self):
-        webview.start(debug=False)
+            def cb(desc, pct, success):
+                if self.window:
+                    s_desc = json.dumps(str(desc))
+                    self.window.evaluate_js(f"updateSetupProgress({s_desc}, {pct}, {str(success).lower()});")
+            res = run_environment_diagnostics(cb)
+            if
