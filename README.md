@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="/images/logo1.png" alt="Reinhart" width="120" style="border-radius: 50%;"/>
+<img src="https://raw.githubusercontent.com/Reinhart-py/kiki/refs/heads/main/images/logo1.png" alt="Reinhart" width="120" style="border-radius: 50%;"/>
 
 # kiri
 ### High-Velocity Lead Generation & Directory Mining Suite
